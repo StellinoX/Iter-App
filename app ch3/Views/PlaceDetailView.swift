@@ -2,7 +2,7 @@
 //  PlaceDetailView.swift
 //  app ch3
 //
-//  Full details view for a secret place - Redesigned
+//  Full details view for a secret place - Redesigned with Wikipedia info
 //
 
 import SwiftUI
@@ -17,6 +17,23 @@ struct PlaceDetailView: View {
     
     @State private var isFavorite: Bool = false
     @State private var isVisited: Bool = false
+    @State private var showingGallery = false
+    @State private var showingShareSheet = false
+    @State private var noteText: String = ""
+    @State private var isEditingNote = false
+    
+    // Wikipedia + Gemini enrichment
+    @State private var wikipediaInfo: WikipediaInfo?
+    @State private var extraPhotos: [String] = []
+    @State private var enhancedDescription: String?
+    @State private var isLoadingEnrichment = false
+    
+    private let wikipediaService = WikipediaService()
+    private let geminiService = GeminiService()
+    
+    private var existingNoteText: String {
+        UserDefaultsManager.shared.getNote(for: place.id)?.text ?? ""
+    }
     
     private var distanceString: String? {
         guard let userLocation = userLocation,
@@ -59,6 +76,24 @@ struct PlaceDetailView: View {
                                     .fill(Color.gray.opacity(0.3))
                             @unknown default:
                                 EmptyView()
+                            }
+                        }
+                        .onTapGesture {
+                            showingGallery = true
+                        }
+                        .overlay(alignment: .bottomTrailing) {
+                            if place.imageUrls.count > 1 {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "photo.on.rectangle")
+                                    Text("\(place.imageUrls.count)")
+                                }
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(8)
+                                .padding(12)
                             }
                         }
                     } else {
@@ -159,21 +194,117 @@ struct PlaceDetailView: View {
                     }
                     
                     // Description
-                    if let description = place.description {
+                    if let description = place.cleanDescription {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("About")
                                 .font(.headline)
                                 .foregroundColor(.white)
                             
-                            Text(description)
-                                .font(.body)
-                                .foregroundColor(.secondary)
-                                .lineSpacing(4)
+                            // Show enhanced description if available, otherwise original
+                            if let enhanced = enhancedDescription {
+                                HStack(alignment: .top, spacing: 4) {
+                                    Image(systemName: "sparkles")
+                                        .font(.caption)
+                                        .foregroundColor(.appAccent)
+                                    Text(enhanced)
+                                        .font(.body)
+                                        .foregroundColor(.gray.opacity(0.9))
+                                        .lineSpacing(4)
+                                }
+                            } else if isLoadingEnrichment {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                        .tint(.appAccent)
+                                    Text("AI is enhancing description...")
+                                        .font(.caption)
+                                        .foregroundColor(.gray)
+                                }
+                            } else {
+                                Text(description)
+                                    .font(.body)
+                                    .foregroundColor(.gray.opacity(0.9))
+                                    .lineSpacing(4)
+                            }
                         }
                     }
                     
+                    // Wikipedia Extra Info
+                    if let wikiInfo = wikipediaInfo, !wikiInfo.fullExtract.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Image(systemName: "w.circle.fill")
+                                    .foregroundColor(.gray)
+                                Text("From Wikipedia")
+                                    .font(.headline)
+                                    .foregroundColor(.white)
+                            }
+                            
+                            Text(wikiInfo.fullExtract)
+                                .font(.body)
+                                .foregroundColor(.gray.opacity(0.9))
+                                .lineSpacing(4)
+                            
+                            // Wikipedia link
+                            Link(destination: URL(string: wikiInfo.pageURL)!) {
+                                HStack {
+                                    Text("Read more on Wikipedia")
+                                    Image(systemName: "arrow.up.right.square")
+                                }
+                                .font(.caption)
+                                .foregroundColor(.appAccent)
+                            }
+                        }
+                        .padding(.top, 8)
+                    } else if isLoadingEnrichment {
+                        HStack {
+                            ProgressView()
+                                .tint(.gray)
+                            Text("Loading extra info...")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    
+                    // Extra Photos Gallery
+                    if !extraPhotos.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("More Photos")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 12) {
+                                    ForEach(extraPhotos, id: \.self) { photoURL in
+                                        if let url = URL(string: photoURL) {
+                                            AsyncImage(url: url) { phase in
+                                                switch phase {
+                                                case .success(let image):
+                                                    image
+                                                        .resizable()
+                                                        .scaledToFill()
+                                                        .frame(width: 200, height: 150)
+                                                        .cornerRadius(12)
+                                                        .clipped()
+                                                case .failure:
+                                                    Color.gray.opacity(0.3)
+                                                        .frame(width: 200, height: 150)
+                                                        .cornerRadius(12)
+                                                default:
+                                                    ProgressView()
+                                                        .frame(width: 200, height: 150)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.top, 8)
+                    }
+                    
                     // Directions Text
-                    if let directions = place.directions {
+                    if let directions = place.cleanDirections {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Getting There")
                                 .font(.headline)
@@ -181,55 +312,114 @@ struct PlaceDetailView: View {
                             
                             Text(directions)
                                 .font(.body)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.gray.opacity(0.9))
                                 .lineSpacing(4)
                         }
                         .padding(.top, 8)
                     }
                     
-                    // Reviews Placeholder
+                    // Personal Notes Section
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
-                            Text("Reviews")
+                            Image(systemName: "note.text")
+                                .foregroundColor(.appAccent)
+                            Text("My Notes")
                                 .font(.headline)
                                 .foregroundColor(.white)
                             Spacer()
-                            Text("Coming soon")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.gray.opacity(0.2))
-                                .cornerRadius(8)
-                        }
-                        
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 12) {
-                                ForEach(0..<3) { _ in
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        HStack {
-                                            Circle()
-                                                .fill(Color.gray.opacity(0.3))
-                                                .frame(width: 32, height: 32)
-                                            VStack(alignment: .leading) {
-                                                Rectangle()
-                                                    .fill(Color.gray.opacity(0.3))
-                                                    .frame(width: 80, height: 10)
-                                                Rectangle()
-                                                    .fill(Color.gray.opacity(0.3))
-                                                    .frame(width: 40, height: 8)
-                                            }
-                                        }
-                                        Rectangle()
-                                            .fill(Color.gray.opacity(0.3))
-                                            .frame(height: 40)
-                                    }
-                                    .padding()
-                                    .frame(width: 200)
-                                    .background(Color.gray.opacity(0.1))
-                                    .cornerRadius(12)
+                            
+                            if noteText.isEmpty {
+                                Button {
+                                    isEditingNote = true
+                                } label: {
+                                    Text("Add Note")
+                                        .font(.caption.weight(.medium))
+                                        .foregroundColor(.appAccent)
                                 }
                             }
+                        }
+                        
+                        if isEditingNote {
+                            VStack(spacing: 12) {
+                                TextEditor(text: $noteText)
+                                    .frame(minHeight: 100)
+                                    .scrollContentBackground(.hidden)
+                                    .background(Color.gray.opacity(0.1))
+                                    .cornerRadius(12)
+                                    .foregroundColor(.white)
+                                
+                                HStack {
+                                    Button {
+                                        isEditingNote = false
+                                        noteText = existingNoteText
+                                    } label: {
+                                        Text("Cancel")
+                                            .font(.subheadline)
+                                            .foregroundColor(.gray)
+                                            .padding(.horizontal, 16)
+                                            .padding(.vertical, 8)
+                                            .background(Color.gray.opacity(0.2))
+                                            .cornerRadius(8)
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    if !noteText.isEmpty {
+                                        Button {
+                                            deleteNote()
+                                        } label: {
+                                            Image(systemName: "trash")
+                                                .foregroundColor(.red)
+                                                .padding(8)
+                                                .background(Color.red.opacity(0.2))
+                                                .cornerRadius(8)
+                                        }
+                                    }
+                                    
+                                    Button {
+                                        saveNote()
+                                    } label: {
+                                        Text("Save")
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundColor(.black)
+                                            .padding(.horizontal, 16)
+                                            .padding(.vertical, 8)
+                                            .background(Color.appAccent)
+                                            .cornerRadius(8)
+                                    }
+                                }
+                            }
+                        } else if !noteText.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(noteText)
+                                    .font(.body)
+                                    .foregroundColor(.gray.opacity(0.9))
+                                    .lineSpacing(4)
+                                
+                                Button {
+                                    isEditingNote = true
+                                } label: {
+                                    Text("Edit")
+                                        .font(.caption)
+                                        .foregroundColor(.appAccent)
+                                }
+                            }
+                            .padding()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.gray.opacity(0.1))
+                            .cornerRadius(12)
+                        } else {
+                            Text("Add personal notes about this place...")
+                                .font(.body)
+                                .foregroundColor(.gray)
+                                .italic()
+                                .padding()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.gray.opacity(0.1))
+                                .cornerRadius(12)
+                                .onTapGesture {
+                                    isEditingNote = true
+                                }
                         }
                     }
                     .padding(.top, 16)
@@ -246,22 +436,61 @@ struct PlaceDetailView: View {
         .background(Color.appBackground)
         .ignoresSafeArea(edges: .top)
         .overlay(alignment: .topTrailing) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .padding(10)
-                    .background(.ultraThinMaterial)
-                    .clipShape(Circle())
+            HStack(spacing: 12) {
+                // Share button
+                Button {
+                    sharePlace()
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding(10)
+                        .background(.ultraThinMaterial)
+                        .clipShape(Circle())
+                }
+                
+                // Close button
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding(10)
+                        .background(.ultraThinMaterial)
+                        .clipShape(Circle())
+                }
             }
             .padding(.top, 50)
             .padding(.trailing, 20)
         }
+        .fullScreenCover(isPresented: $showingGallery) {
+            ImageGalleryView(images: place.imageUrls, isPresented: $showingGallery)
+        }
         .onAppear {
             isFavorite = viewModel.isFavorite(place.id)
             isVisited = viewModel.isVisited(place.id)
+            noteText = existingNoteText
+            
+            // Fetch Wikipedia info only (free, no API limits)
+            Task {
+                isLoadingEnrichment = true
+                
+                // Get Wikipedia info
+                if let info = await wikipediaService.getPlaceInfo(
+                    placeName: place.displayName,
+                    city: place.city
+                ) {
+                    wikipediaInfo = info
+                    
+                    // Add Wikipedia image to extra photos
+                    if let imageURL = info.imageURL {
+                        extraPhotos.append(imageURL)
+                    }
+                }
+                
+                isLoadingEnrichment = false
+            }
         }
     }
     
@@ -272,6 +501,44 @@ struct PlaceDetailView: View {
         mapItem.openInMaps(launchOptions: [
             MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking
         ])
+    }
+    
+    private func saveNote() {
+        let note = PlaceNote(placeId: place.id, text: noteText)
+        UserDefaultsManager.shared.saveNote(note)
+        isEditingNote = false
+    }
+    
+    private func deleteNote() {
+        UserDefaultsManager.shared.deleteNote(for: place.id)
+        noteText = ""
+        isEditingNote = false
+    }
+    
+    private func sharePlace() {
+        var shareItems: [Any] = []
+        
+        // Text content
+        var shareText = "🗺️ \(place.displayName)"
+        if let location = place.fullLocation {
+            shareText += "\n📍 \(location)"
+        }
+        if let description = place.cleanDescription?.prefix(150) {
+            shareText += "\n\n\(description)..."
+        }
+        shareItems.append(shareText)
+        
+        // URL if available
+        if let urlString = place.url, let url = URL(string: urlString) {
+            shareItems.append(url)
+        }
+        
+        let activityVC = UIActivityViewController(activityItems: shareItems, applicationActivities: nil)
+        
+        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           let rootVC = windowScene.windows.first?.rootViewController {
+            rootVC.present(activityVC, animated: true)
+        }
     }
 }
 
@@ -291,3 +558,16 @@ struct RoundedCorner: Shape {
         return Path(path.cgPath)
     }
 }
+
+// Conditional modifier extension
+extension View {
+    @ViewBuilder
+    func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
+        }
+    }
+}
+

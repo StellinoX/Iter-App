@@ -33,19 +33,253 @@ final class PlacesViewModel: ObservableObject {
     @Published var searchText = ""
     @Published var clusteredItems: [MapItem] = []
     
+    // Regione corrente per aggiornare il clustering dopo il caricamento
+    private var currentDisplayRegion: MKCoordinateRegion?
+    
     @Published var selectedCategories: Set<String> = []
     @Published var favoriteIDs: Set<Int64> = []
     @Published var visitedIDs: Set<Int64> = []
     @Published var favoritePlacesFull: [Place] = [] // Full Place objects for favorites
     
+    // Advanced filter settings
+    @Published var currentSortOrder: SortOrder = .distance
+    @Published var maxDistanceFilter: Double?
+    @Published var showOnlyUnvisited: Bool = false
+    var userLocationForFilter: CLLocationCoordinate2D?
+    
     private let userDefaults = UserDefaultsManager.shared
     private var loadingTask: Task<Void, Never>?
+    
+    // City-based statistics
+    @Published var currentCity: String?
+    @Published var cityTotalPlaces: Int = 0
+    @Published var cityCountByCategory: [String: Int] = [:]
     
     init() {
         // Carica dati persistenti
         self.selectedCategories = userDefaults.getSelectedCategories()
         self.favoriteIDs = userDefaults.getFavorites()
         self.visitedIDs = userDefaults.getVisited()
+    }
+    
+    /// Detect city from map center using MKLocalSearch
+    func detectCity(from coordinate: CLLocationCoordinate2D) async {
+        // Use MKLocalSearch for reverse geocoding
+        let searchRequest = MKLocalSearch.Request()
+        searchRequest.naturalLanguageQuery = "point of interest"
+        searchRequest.region = MKCoordinateRegion(
+            center: coordinate,
+            latitudinalMeters: 1000,
+            longitudinalMeters: 1000
+        )
+        
+        let search = MKLocalSearch(request: searchRequest)
+        
+        do {
+            let response = try await search.start()
+            if let firstItem = response.mapItems.first {
+                let placemark = firstItem.placemark
+                let city = placemark.locality ?? placemark.administrativeArea ?? placemark.country
+                if city != currentCity {
+                    currentCity = city
+                    if let cityName = city {
+                        await fetchCityStats(city: cityName)
+                    }
+                }
+            }
+        } catch {
+            print("Geocoding error: \(error)")
+        }
+    }
+    
+    /// Fetch total place count for a specific city from Supabase
+    func fetchCityStats(city: String) async {
+        do {
+            let client = SupabaseManager.shared.client
+            
+            // Fetch all places for this city to get accurate count
+            let response: [Place] = try await client
+                .from("places")
+                .select()
+                .ilike("city", pattern: "%\(city)%")
+                .execute()
+                .value
+            
+            cityTotalPlaces = response.count
+            
+            // Count by category
+            var categoryCounts: [String: Int] = [:]
+            for place in response {
+                if let category = place.categoryName {
+                    categoryCounts[category, default: 0] += 1
+                }
+            }
+            cityCountByCategory = categoryCounts
+            
+        } catch {
+            print("Error fetching city stats: \(error)")
+        }
+    }
+    
+    /// Get visited count for current city
+    var cityVisitedCount: Int {
+        places.filter { 
+            $0.city?.localizedCaseInsensitiveContains(currentCity ?? "") == true &&
+            visitedIDs.contains($0.id)
+        }.count
+    }
+    
+    /// Get favorite count for current city
+    var cityFavoriteCount: Int {
+        places.filter {
+            $0.city?.localizedCaseInsensitiveContains(currentCity ?? "") == true &&
+            favoriteIDs.contains($0.id)
+        }.count
+    }
+    
+    // MARK: - Regional Statistics
+    
+    struct RegionalStats {
+        var worldTotal: Int = 0
+        var europeTotal: Int = 0
+        var americasTotal: Int = 0
+        var asiaTotal: Int = 0
+    }
+    
+    @Published var regionalStats = RegionalStats()
+    
+    // Dynamic lists from DB
+    @Published var dbCountries: [String] = []
+    @Published var dbCategories: [String] = []
+    
+    // Country lists for each region (will be filtered by what's in DB)
+    private let europeCountries = ["Italy", "Italia", "France", "Francia", "Spain", "España", "Germany", "Deutschland", "UK", "United Kingdom", "Portugal", "Greece", "Netherlands", "Belgium", "Austria", "Switzerland", "Poland", "Czech", "Hungary", "Croatia", "Slovenia", "Romania", "Bulgaria", "Sweden", "Norway", "Denmark", "Finland", "Ireland"]
+    
+    private let americasCountries = ["USA", "United States", "Canada", "Mexico", "Brasil", "Brazil", "Argentina", "Chile", "Colombia", "Peru", "Venezuela", "Cuba", "Ecuador", "Bolivia", "Uruguay", "Paraguay", "Costa Rica", "Panama"]
+    
+    private let asiaCountries = ["China", "Japan", "Russia", "India", "Thailand", "Vietnam", "Indonesia", "Malaysia", "Singapore", "Korea", "Taiwan", "Philippines", "Turkey", "Israel", "UAE", "Saudi Arabia", "Iran", "Pakistan", "Kazakhstan", "Mongolia", "Nepal"]
+    
+    /// Fetch distinct countries and categories from DB to see what's available
+    func fetchDistinctValues() async {
+        print("🔍 Fetching distinct values from DB...")
+        
+        do {
+            let client = SupabaseManager.shared.client
+            
+            // Get sample of places to extract unique countries and tags
+            let sample: [Place] = try await client
+                .from("places")
+                .select("country, tags_title")
+                .limit(30000)
+                .execute()
+                .value
+            
+            // Extract unique countries
+            var countries = Set<String>()
+            var categories = Set<String>()
+            
+            for place in sample {
+                if let country = place.country, !country.isEmpty {
+                    countries.insert(country)
+                }
+                if let tags = place.tags_title, !tags.isEmpty {
+                    categories.insert(tags)
+                }
+            }
+            
+            dbCountries = countries.sorted()
+            dbCategories = categories.sorted()
+            
+            print("🌍 Countries in DB (\(dbCountries.count)):")
+            for country in dbCountries {
+                print("   - \(country)")
+            }
+            
+            print("🏷️ Categories/Tags in DB (\(dbCategories.count)):")
+            for category in dbCategories {
+                print("   - \(category)")
+            }
+            
+        } catch {
+            print("❌ Error fetching distinct values: \(error)")
+        }
+    }
+    
+    /// Fetch regional statistics from Supabase using simple count queries
+    func fetchRegionalStats() async {
+        print("📊 Starting fetchRegionalStats...")
+        
+        do {
+            let client = SupabaseManager.shared.client
+            
+            // World total
+            let worldCount = try await client
+                .from("places")
+                .select("*", head: true, count: .exact)
+                .execute()
+                .count ?? 0
+            
+            print("📊 World total: \(worldCount)")
+            
+            // Europe count - filter by European countries
+            let europeFilter = europeCountries.map { "country.ilike.%\($0)%" }.joined(separator: ",")
+            let europeCount = try await client
+                .from("places")
+                .select("*", head: true, count: .exact)
+                .or(europeFilter)
+                .execute()
+                .count ?? 0
+            
+            print("📊 Europe total: \(europeCount)")
+            
+            // Americas count
+            let americasFilter = americasCountries.map { "country.ilike.%\($0)%" }.joined(separator: ",")
+            let americasCount = try await client
+                .from("places")
+                .select("*", head: true, count: .exact)
+                .or(americasFilter)
+                .execute()
+                .count ?? 0
+            
+            print("📊 Americas total: \(americasCount)")
+            
+            // Asia count
+            let asiaFilter = asiaCountries.map { "country.ilike.%\($0)%" }.joined(separator: ",")
+            let asiaCount = try await client
+                .from("places")
+                .select("*", head: true, count: .exact)
+                .or(asiaFilter)
+                .execute()
+                .count ?? 0
+            
+            print("📊 Asia total: \(asiaCount)")
+            
+            var stats = RegionalStats()
+            stats.worldTotal = worldCount
+            stats.europeTotal = europeCount
+            stats.americasTotal = americasCount
+            stats.asiaTotal = asiaCount
+            
+            regionalStats = stats
+            
+            print("📊 All stats updated!")
+            
+        } catch {
+            print("❌ Error fetching regional stats: \(error)")
+        }
+    }
+    
+    /// Get visited count for a region
+    func visitedInRegion(_ countries: [String]) -> Int {
+        var count = 0
+        for id in visitedIDs {
+            if let place = places.first(where: { $0.id == id }),
+               let country = place.country,
+               countries.contains(where: { country.localizedCaseInsensitiveContains($0) }) {
+                count += 1
+            }
+        }
+        return count
     }
     
     // Tutte le categorie disponibili dai luoghi caricati
@@ -112,6 +346,65 @@ final class PlacesViewModel: ObservableObject {
         return filtered
     }
     
+    /// Apply advanced filters and sorting
+    func applyFilters(sortOrder: SortOrder, maxDistance: Double?, showOnlyUnvisited: Bool) {
+        self.currentSortOrder = sortOrder
+        self.maxDistanceFilter = maxDistance
+        self.showOnlyUnvisited = showOnlyUnvisited
+        
+        // Trigger UI update
+        objectWillChange.send()
+        
+        // Update clustering with current region
+        if let region = currentDisplayRegion {
+            updateClusteredItems(for: region)
+        }
+    }
+    
+    /// Get places with all filters applied
+    func getFilteredAndSortedPlaces(userLocation: CLLocationCoordinate2D?) -> [Place] {
+        var result = filteredPlaces
+        
+        // Apply unvisited filter
+        if showOnlyUnvisited {
+            result = result.filter { !visitedIDs.contains($0.id) }
+        }
+        
+        // Apply distance filter
+        if let maxDist = maxDistanceFilter, let userLoc = userLocation {
+            result = result.filter { place in
+                guard let placeCoord = place.coordinate else { return false }
+                let distance = self.calculateDistance(from: userLoc, to: placeCoord)
+                return distance <= maxDist
+            }
+        }
+        
+        // Apply sorting
+        switch currentSortOrder {
+        case .distance:
+            if let userLoc = userLocation {
+                result.sort { place1, place2 in
+                    let dist1 = place1.coordinate.map { calculateDistance(from: userLoc, to: $0) } ?? Double.infinity
+                    let dist2 = place2.coordinate.map { calculateDistance(from: userLoc, to: $0) } ?? Double.infinity
+                    return dist1 < dist2
+                }
+            }
+        case .name:
+            result.sort { ($0.title ?? "") < ($1.title ?? "") }
+        case .recent:
+            // Keep original order (assumed to be by ID/recent)
+            result.sort { $0.id > $1.id }
+        }
+        
+        return result
+    }
+    
+    private func calculateDistance(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> Double {
+        let fromLocation = CLLocation(latitude: from.latitude, longitude: from.longitude)
+        let toLocation = CLLocation(latitude: to.latitude, longitude: to.longitude)
+        return fromLocation.distance(from: toLocation) / 1000.0 // km
+    }
+    
     // MARK: - Preferiti
     
     func toggleFavorite(_ id: Int64) {
@@ -169,6 +462,9 @@ final class PlacesViewModel: ObservableObject {
     
     /// Carica i luoghi nella regione visibile della mappa
     func fetchPlacesInRegion(_ region: MKCoordinateRegion) async {
+        // Salva la regione corrente per il clustering
+        currentDisplayRegion = region
+        
         // Cancella il task precedente se esiste
         loadingTask?.cancel()
         
@@ -184,6 +480,8 @@ final class PlacesViewModel: ObservableObject {
             let hasZoomedSignificantly = spanDiff > region.span.latitudeDelta * 0.3
             
             if !hasMovedSignificantly && !hasZoomedSignificantly {
+                // Aggiorna comunque il clustering con la regione corrente
+                updateClusteredItems(for: region)
                 return // Ancora nella stessa area, usa la cache
             }
         }
@@ -219,7 +517,7 @@ final class PlacesViewModel: ObservableObject {
                 }
                 
                 let data: [Place] = try await query
-                    .limit(300) // Ridotto da 500 a 300 per migliori performance
+                    .limit(1000) // Aumentato grazie al clustering
                     .execute()
                     .value
                 
@@ -231,6 +529,10 @@ final class PlacesViewModel: ObservableObject {
                 self.loadedRegion = region
                 print("✅ Loaded \(data.count) places in visible region")
                 print("   Region: lat \(String(format: "%.2f", minLat))-\(String(format: "%.2f", maxLat)), lng \(String(format: "%.2f", minLng))-\(String(format: "%.2f", maxLng))")
+                
+                // Aggiorna il clustering subito dopo il caricamento
+                self.updateClusteredItems(for: region)
+                
             } catch {
                 if !Task.isCancelled {
                     self.errorMessage = "Loading error: \(error.localizedDescription)"
@@ -409,6 +711,20 @@ final class PlacesViewModel: ObservableObject {
         )
         
         self.regionToRecenter = EquatableRegion(region: MKCoordinateRegion(center: center, span: span))
+    }
+    
+    /// Navigate to a specific region (used by city search)
+    func navigateToRegion(_ region: MKCoordinateRegion) {
+        // Clear current places for fresh load
+        loadedRegion = nil
+        
+        // Set the region to recenter the map
+        self.regionToRecenter = EquatableRegion(region: region)
+        
+        // Fetch places in the new region
+        Task {
+            await fetchPlacesInRegion(region)
+        }
     }
     
     // MARK: - Clustering

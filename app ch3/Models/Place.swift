@@ -67,6 +67,36 @@ struct Place: Decodable, Identifiable {
             return location
         }
     }
+    
+    // Description cleaned from HTML tags
+    var cleanDescription: String? {
+        description?.stripHTML()
+    }
+    
+    // Directions cleaned from HTML tags
+    var cleanDirections: String? {
+        directions?.stripHTML()
+    }
+}
+
+// MARK: - String Extension for HTML Stripping
+
+extension String {
+    /// Remove HTML tags from string
+    func stripHTML() -> String {
+        // Remove HTML tags
+        var result = self.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        // Decode HTML entities
+        result = result.replacingOccurrences(of: "&amp;", with: "&")
+        result = result.replacingOccurrences(of: "&lt;", with: "<")
+        result = result.replacingOccurrences(of: "&gt;", with: ">")
+        result = result.replacingOccurrences(of: "&quot;", with: "\"")
+        result = result.replacingOccurrences(of: "&#39;", with: "'")
+        result = result.replacingOccurrences(of: "&nbsp;", with: " ")
+        // Clean up extra whitespace
+        result = result.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
 
 enum MapItem: Identifiable {

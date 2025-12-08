@@ -21,8 +21,53 @@ struct ImprovedMapView: View {
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var lastUpdateTask: Task<Void, Never>?
     @State private var currentRegion: MKCoordinateRegion?
+    @State private var showListView = false
     
     var body: some View {
+        ZStack {
+            if showListView {
+                // List View
+                PlacesListView(
+                    viewModel: viewModel,
+                    userLocation: locationManager.location,
+                    selectedPlace: $selectedPlace,
+                    showingDetail: $showingDetail
+                )
+            } else {
+                // Map View
+                mapContent
+            }
+            
+            // Toggle button
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    toggleButton
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 100)
+                }
+            }
+        }
+    }
+    
+    private var toggleButton: some View {
+        Button(action: {
+            withAnimation(.spring(response: 0.3)) {
+                showListView.toggle()
+            }
+        }) {
+            Image(systemName: showListView ? "map.fill" : "list.bullet")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: 50, height: 50)
+                .background(Color.appAccent)
+                .clipShape(Circle())
+                .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+        }
+    }
+    
+    private var mapContent: some View {
         ZStack {
             // Mappa
             Map(position: $cameraPosition) {
@@ -101,6 +146,9 @@ struct ImprovedMapView: View {
                         await viewModel.fetchPlacesInRegion(context.region)
                         // Aggiorna clustering con nuovi dati
                         viewModel.updateClusteredItems(for: context.region)
+                        
+                        // Detect city for statistics (with separate debounce)
+                        await viewModel.detectCity(from: context.region.center)
                     }
                 }
             }
@@ -151,11 +199,17 @@ struct ImprovedMapView: View {
         }
         .onChange(of: locationManager.location != nil) { _, hasLocation in
             if hasLocation, let newLocation = locationManager.location {
+                let userRegion = MKCoordinateRegion(
+                    center: newLocation,
+                    span: MKCoordinateSpan(latitudeDelta: 0.5, longitudeDelta: 0.5)
+                )
                 withAnimation {
-                    cameraPosition = .region(MKCoordinateRegion(
-                        center: newLocation,
-                        span: MKCoordinateSpan(latitudeDelta: 0.5, longitudeDelta: 0.5)
-                    ))
+                    cameraPosition = .region(userRegion)
+                }
+                // Carica i luoghi per la nuova regione dell'utente
+                Task {
+                    await viewModel.fetchPlacesInRegion(userRegion)
+                    viewModel.updateClusteredItems(for: userRegion)
                 }
             }
         }
