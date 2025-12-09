@@ -59,13 +59,12 @@ class CitySearchCompleter: NSObject, ObservableObject, MKLocalSearchCompleterDel
         do {
             let response = try await search.start()
             if let item = response.mapItems.first {
-                // Access location through placemark (current API)
-                if let location = item.placemark.location {
-                    return MKCoordinateRegion(
-                        center: location.coordinate,
-                        span: MKCoordinateSpan(latitudeDelta: 0.5, longitudeDelta: 0.5)
-                    )
-                }
+                // iOS 26+: location is non-optional
+                let location = item.location
+                return MKCoordinateRegion(
+                    center: location.coordinate,
+                    span: MKCoordinateSpan(latitudeDelta: 0.5, longitudeDelta: 0.5)
+                )
             }
         } catch {
             print("Search error: \(error.localizedDescription)")
@@ -190,10 +189,6 @@ struct CitySearchView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Cancel") {
-                        isPresented = false
-                    }
-                    .foregroundColor(.appAccent)
                 }
             }
         }

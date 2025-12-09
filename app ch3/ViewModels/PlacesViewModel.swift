@@ -57,7 +57,9 @@ final class PlacesViewModel: ObservableObject {
     
     init() {
         // Carica dati persistenti
-        self.selectedCategories = userDefaults.getSelectedCategories()
+        // NON caricare le categorie selezionate - mostra tutti i luoghi per default
+        // L'utente può attivare filtri manualmente in Settings
+        self.selectedCategories = []
         self.favoriteIDs = userDefaults.getFavorites()
         self.visitedIDs = userDefaults.getVisited()
     }
@@ -78,8 +80,8 @@ final class PlacesViewModel: ObservableObject {
         do {
             let response = try await search.start()
             if let firstItem = response.mapItems.first {
-                let placemark = firstItem.placemark
-                let city = placemark.locality ?? placemark.administrativeArea ?? placemark.country
+                // iOS 26+: Use addressRepresentations for city name
+                let city = firstItem.addressRepresentations?.cityName
                 if city != currentCity {
                     currentCity = city
                     if let cityName = city {
@@ -737,9 +739,9 @@ final class PlacesViewModel: ObservableObject {
         }
         
         // Soglia di distanza per raggruppare (dipende dallo zoom)
-        // Più alto è lo zoom (delta piccolo), più piccola è la soglia
-        // Ridotto divisore: i pin si separano prima durante lo zoom
-        let threshold = region.span.latitudeDelta / 30.0
+        // Più alto è il divisore, più i pin si separano facilmente
+        // Aumentato da /30 a /80 per mostrare più pin individuali
+        let threshold = region.span.latitudeDelta / 80.0
         
         var items: [MapItem] = []
         var processedIndices = Set<Int>()

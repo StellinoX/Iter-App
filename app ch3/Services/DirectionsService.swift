@@ -34,9 +34,10 @@ class DirectionsService {
         return await getRoute(from: origin, to: destination, transportType: .transit)
     }
     
-    /// Create MKMapItem from coordinate
+    /// Create MKMapItem from coordinate using iOS 26+ API
     private func mapItem(for coordinate: CLLocationCoordinate2D) -> MKMapItem {
-        return MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        return MKMapItem(location: location, address: nil)
     }
     
     /// Get route between two coordinates
@@ -109,11 +110,11 @@ class DirectionsService {
         
         do {
             let response = try await search.start()
-            guard let mapItem = response.mapItems.first,
-                  let location = mapItem.placemark.location else {
+            guard let mapItem = response.mapItems.first else {
                 print("❌ DirectionsService: Could not find address")
                 return nil
             }
+            let location = mapItem.location
             
             return await getRoute(from: location.coordinate, to: destination, transportType: transportType)
             
@@ -164,13 +165,14 @@ class DirectionsService {
             var restaurants: [RestaurantSuggestion] = []
             
             for item in response.mapItems.prefix(5) {
-                let distance = calculateDistance(from: coordinate, to: item.placemark.coordinate)
+                let itemCoord = item.location.coordinate
+                let distance = calculateDistance(from: coordinate, to: itemCoord)
                 
                 let restaurant = RestaurantSuggestion(
                     id: UUID().uuidString,
                     name: item.name ?? "Restaurant",
                     category: item.pointOfInterestCategory?.rawValue.replacingOccurrences(of: "MKPOICategory", with: "") ?? "Restaurant",
-                    coordinate: item.placemark.coordinate,
+                    coordinate: itemCoord,
                     distance: distance,
                     phoneNumber: item.phoneNumber,
                     url: item.url?.absoluteString

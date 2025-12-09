@@ -31,12 +31,18 @@ struct TripDetailView: View {
         .navigationTitle(trip.cityName)
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                ShareLink(item: generateShareText()) {
+                    Image(systemName: "square.and.arrow.up")
+                        .foregroundColor(.appAccent)
+                }
+            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
                     saveTrip()
                     isPresented = false
                 } label: {
-                    Text("Save")
+                    Text("Done")
                         .fontWeight(.semibold)
                         .foregroundColor(.appAccent)
                 }
@@ -243,6 +249,31 @@ struct TripDetailView: View {
     private func saveTrip() {
         // Save full trip to UserDefaults
         UserDefaultsManager.shared.saveTrip(trip)
+    }
+    
+    private func generateShareText() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        let dateRange = "\(formatter.string(from: trip.startDate)) - \(formatter.string(from: trip.endDate))"
+        
+        var text = "✈️ My \(trip.cityName) Trip\n"
+        text += "📅 \(dateRange) (\(trip.numberOfDays) days)\n\n"
+        
+        for day in trip.days {
+            text += "📍 Day \(day.dayNumber):\n"
+            for activity in day.activities {
+                text += "  • \(activity.placeName)"
+                if !activity.startTime.isEmpty {
+                    text += " (\(activity.startTime))"
+                }
+                text += "\n"
+            }
+            text += "\n"
+        }
+        
+        text += "🗺️ Planned with Hidden Places App"
+        
+        return text
     }
 }
 

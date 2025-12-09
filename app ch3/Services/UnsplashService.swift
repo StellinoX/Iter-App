@@ -20,7 +20,7 @@ class UnsplashService {
     
     // Free Unsplash API - register at unsplash.com/developers
     // Demo key - replace with your own for production
-    private let accessKey = "YOUR_UNSPLASH_ACCESS_KEY"
+    private let accessKey = "qXXEC9NGppu9amEJqRB_JvWl3JQLaHCc7pF6OqKLt9M"
     private let baseURL = "https://api.unsplash.com"
     
     /// Search for photos of a place

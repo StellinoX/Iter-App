@@ -11,7 +11,19 @@ import SwiftUI
 struct app_ch3App: App {
     var body: some Scene {
         WindowGroup {
+            RootView()
+        }
+    }
+}
+
+struct RootView: View {
+    @State private var hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
+    
+    var body: some View {
+        if hasCompletedOnboarding {
             MainView()
+        } else {
+            OnboardingView(isCompleted: $hasCompletedOnboarding)
         }
     }
 }

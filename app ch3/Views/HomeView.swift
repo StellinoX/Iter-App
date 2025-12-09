@@ -79,6 +79,11 @@ struct HomeView: View {
                 // Plan Trip CTA
                 planTripCTA
                 
+                // Loading state
+                if viewModel.isLoading && viewModel.places.isEmpty {
+                    loadingState
+                }
+                
                 // Trending Places
                 if !trendingPlaces.isEmpty {
                     placesSection(title: "Trending", icon: "flame.fill", places: trendingPlaces)
@@ -94,6 +99,11 @@ struct HomeView: View {
                     placesSection(title: "Suggested for You", icon: "sparkles", places: suggestedPlaces)
                 }
                 
+                // Empty state (no places after loading)
+                if !viewModel.isLoading && viewModel.places.isEmpty && hasLoadedInitially {
+                    emptyState
+                }
+                
                 Spacer(minLength: 100)
             }
             .padding(.horizontal)
@@ -103,8 +113,9 @@ struct HomeView: View {
             // Load places at startup
             await loadPlacesForHome()
         }
-        .onChange(of: userLocation != nil) { _, hasLocation in
-            if hasLocation {
+        .onAppear {
+            // Backup: trigger load if task didn't run
+            if !hasLoadedInitially && viewModel.places.isEmpty {
                 Task {
                     await loadPlacesForHome()
                 }
@@ -112,29 +123,39 @@ struct HomeView: View {
         }
     }
     
+    @State private var hasLoadedInitially = false
+    
     private func loadPlacesForHome() async {
-        guard viewModel.places.isEmpty else { return } // Already loaded
+        // Only skip if we've successfully loaded before AND have places
+        guard !hasLoadedInitially || viewModel.places.isEmpty else { return }
+        
+        print("🏠 HomeView: Loading places...")
         
         let region: MKCoordinateRegion
         if let userLoc = userLocation {
+            // Larger region around user for more places
             region = MKCoordinateRegion(
                 center: userLoc,
-                span: MKCoordinateSpan(latitudeDelta: 1.0, longitudeDelta: 1.0)
+                span: MKCoordinateSpan(latitudeDelta: 2.0, longitudeDelta: 2.0)
             )
         } else {
-            // Default to Italy
+            // Default to Italy with wide span
             region = MKCoordinateRegion(
                 center: CLLocationCoordinate2D(latitude: 41.9, longitude: 12.5),
-                span: MKCoordinateSpan(latitudeDelta: 5.0, longitudeDelta: 5.0)
+                span: MKCoordinateSpan(latitudeDelta: 8.0, longitudeDelta: 8.0)
             )
         }
         
         await viewModel.fetchPlacesInRegion(region)
         
-        // Cache trending places once
-        if cachedTrendingPlaces.isEmpty {
+        hasLoadedInitially = true
+        
+        // Cache trending places once loaded
+        if cachedTrendingPlaces.isEmpty && !viewModel.validPlaces.isEmpty {
             cachedTrendingPlaces = computeTrendingPlaces()
         }
+        
+        print("🏠 HomeView: Loaded \(viewModel.places.count) places")
     }
     
     private func computeTrendingPlaces() -> [Place] {
@@ -155,14 +176,24 @@ struct HomeView: View {
     // MARK: - Subviews
     
     private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(greeting)
-                .font(.title.weight(.bold))
-                .foregroundColor(.white)
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(greeting)
+                    .font(.title.weight(.bold))
+                    .foregroundColor(.white)
+                
+                Text("Where will you explore today?")
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+            }
             
-            Text("Where will you explore today?")
-                .font(.subheadline)
-                .foregroundColor(.gray)
+            Spacer()
+            
+            NavigationLink(destination: SettingsView()) {
+                Image(systemName: "gearshape.fill")
+                    .font(.title2)
+                    .foregroundColor(.gray)
+            }
         }
         .padding(.top, 20)
     }
@@ -196,6 +227,51 @@ struct HomeView: View {
             )
             .cornerRadius(20)
         }
+    }
+    
+    private var loadingState: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .controlSize(.large)
+                .tint(.appAccent)
+            Text("Discovering hidden gems...")
+                .font(.subheadline)
+                .foregroundColor(.gray)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
+    }
+    
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "map")
+                .font(.system(size: 50))
+                .foregroundColor(.gray.opacity(0.5))
+            
+            Text("No places found nearby")
+                .font(.headline)
+                .foregroundColor(.white)
+            
+            Text("Try moving to a different area on the map")
+                .font(.subheadline)
+                .foregroundColor(.gray)
+            
+            Button {
+                hasLoadedInitially = false
+                Task {
+                    await loadPlacesForHome()
+                }
+            } label: {
+                Text("Retry")
+                    .foregroundColor(.appAccent)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 10)
+                    .background(Color.appAccent.opacity(0.2))
+                    .cornerRadius(20)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
     }
     
     private func placesSection(title: String, icon: String, places: [Place]) -> some View {
