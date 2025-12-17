@@ -1,0 +1,38 @@
+# Xcode
+*.xcodeproj/project.xcworkspace/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+build/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+!default.pbxuser
+!default.mode1v3
+!default.mode2v3
+!default.perspectivev3
+xcuserdata/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Swift Package Manager
+.build/
+Packages/
+Package.resolved
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+.swiftpm/
+
+# CocoaPods
+Pods/
+
+# Secrets - NEVER COMMIT API KEYS!
+**/Secrets.swift
+repair_database.py
+
+# IDE
+*.swp
+*~
