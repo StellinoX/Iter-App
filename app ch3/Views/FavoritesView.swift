@@ -36,7 +36,7 @@ struct FavoritesView: View {
             }
             .padding()
         }
-        .background(Color.appBackground)
+        .background(Color(hex: "0f0720"))
         .task {
             await viewModel.fetchFavoritePlaces()
         }

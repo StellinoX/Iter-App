@@ -86,7 +86,7 @@ struct CitySearchView: View {
                 // Search field
                 HStack(spacing: 12) {
                     Image(systemName: "magnifyingglass")
-                        .foregroundColor(.gray)
+                        .foregroundColor(.white.opacity(0.7))
                     
                     TextField("Search city or region...", text: Binding(
                         get: { searchCompleter.searchText },
@@ -100,7 +100,7 @@ struct CitySearchView: View {
                             searchCompleter.search("")
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.gray)
+                                .foregroundColor(.white.opacity(0.7))
                         }
                     }
                 }
@@ -122,7 +122,7 @@ struct CitySearchView: View {
                             .font(.system(size: 50))
                             .foregroundColor(.gray.opacity(0.5))
                         Text("No results found")
-                            .foregroundColor(.gray)
+                            .foregroundColor(.white.opacity(0.7))
                     }
                     .padding(.top, 60)
                     Spacer()
@@ -138,7 +138,7 @@ struct CitySearchView: View {
                         
                         Text("Find hidden places in any city or region")
                             .font(.subheadline)
-                            .foregroundColor(.gray)
+                            .foregroundColor(.white.opacity(0.7))
                             .multilineTextAlignment(.center)
                     }
                     .padding(.top, 60)
@@ -163,7 +163,7 @@ struct CitySearchView: View {
                                             if !result.subtitle.isEmpty {
                                                 Text(result.subtitle)
                                                     .font(.caption)
-                                                    .foregroundColor(.gray)
+                                                    .foregroundColor(.white.opacity(0.7))
                                             }
                                         }
                                         
@@ -171,7 +171,7 @@ struct CitySearchView: View {
                                         
                                         Image(systemName: "chevron.right")
                                             .font(.caption)
-                                            .foregroundColor(.gray)
+                                            .foregroundColor(.white.opacity(0.7))
                                     }
                                     .padding()
                                     .background(Color.clear)
@@ -184,8 +184,8 @@ struct CitySearchView: View {
                     }
                 }
             }
-            .background(Color.appBackground)
-            .navigationTitle("Search Location")
+            .background(Color(hex: "0f0720"))
+            
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {

@@ -90,12 +90,17 @@ struct TripActivity: Codable, Identifiable {
     var transportDuration: String? // e.g., "15 min"
     var transportDetails: String? // e.g., "Bus 64"
     var notes: String?
+    var coordinatesLat: Double?
+    var coordinatesLng: Double?
     
-    init(placeName: String, startTime: String = "", duration: String = "1h") {
+    init(placeName: String, startTime: String = "", duration: String = "1h", placeId: Int64? = nil, coordinatesLat: Double? = nil, coordinatesLng: Double? = nil) {
         self.id = UUID()
         self.placeName = placeName
         self.startTime = startTime
         self.duration = duration
+        self.placeId = placeId
+        self.coordinatesLat = coordinatesLat
+        self.coordinatesLng = coordinatesLng
     }
 }
 

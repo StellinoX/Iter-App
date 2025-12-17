@@ -8,6 +8,7 @@
 import Foundation
 import MapKit
 import CoreLocation
+import UIKit
 
 struct RouteInfo {
     let distance: String      // e.g. "1.2 km"
@@ -125,32 +126,106 @@ class DirectionsService {
     }
     
     /// Get ETA between multiple places (for itinerary planning)
+    /// Get ETA between multiple places (for itinerary planning)
     func getETAsBetweenPlaces(_ places: [Place]) async -> [String] {
-        var etas: [String] = []
+        let count = places.count - 1
+        guard count > 0 else { return [] }
         
-        for i in 0..<(places.count - 1) {
-            guard let coord1 = places[i].coordinate,
-                  let coord2 = places[i + 1].coordinate else {
-                etas.append("N/A")
-                continue
+        return await withTaskGroup(of: (Int, String).self) { group in
+            for i in 0..<count {
+                // Extract raw lat/lng values to avoid main actor isolation
+                let place1 = places[i]
+                let place2 = places[i+1]
+                let lat1 = place1.coordinates_lat
+                let lng1 = place1.coordinates_lng
+                let lat2 = place2.coordinates_lat
+                let lng2 = place2.coordinates_lng
+                
+                group.addTask {
+                    guard let la1 = lat1, let lo1 = lng1,
+                          let la2 = lat2, let lo2 = lng2 else {
+                        return (i, "N/A")
+                    }
+                    
+                    let c1 = CLLocationCoordinate2D(latitude: la1, longitude: lo1)
+                    let c2 = CLLocationCoordinate2D(latitude: la2, longitude: lo2)
+                    
+                    if let route = await self.getWalkingRoute(from: c1, to: c2) {
+                        return (i, route.duration)
+                    } else {
+                        return (i, "~15 min")
+                    }
+                }
             }
             
-            if let route = await getWalkingRoute(from: coord1, to: coord2) {
-                etas.append(route.duration)
-            } else {
-                etas.append("~15 min")
+            // Collect results and sort by index
+            var results = Array(repeating: "", count: count)
+            for await (index, duration) in group {
+                if index < results.count {
+                    results[index] = duration
+                }
             }
+            return results
         }
-        
-        return etas
     }
     
     // MARK: - Restaurant Search
     
-    /// Search for nearby restaurants using Apple Maps
-    func searchNearbyRestaurants(near coordinate: CLLocationCoordinate2D, radius: CLLocationDistance = 500) async -> [RestaurantSuggestion] {
+    /// Search for nearby restaurants using Apple Maps with multiple query fallbacks
+    func searchNearbyRestaurants(near coordinate: CLLocationCoordinate2D, radius: CLLocationDistance = 500, query: String? = nil) async -> [RestaurantSuggestion] {
+        // If specific query provided (e.g. "Street Food"), use that primarily
+        let searchQueries = query != nil ? [query!, "restaurant"] : ["restaurant", "ristorante", "trattoria", "food", "cafe"]
+        
+        var allResults: [RestaurantSuggestion] = []
+        var seenNames: Set<String> = []
+        
+        for q in searchQueries {
+            let results = await performRestaurantSearch(query: q, coordinate: coordinate, radius: radius)
+            
+            // Add only unique restaurants (by name)
+            for restaurant in results {
+                if !seenNames.contains(restaurant.name.lowercased()) {
+                    seenNames.insert(restaurant.name.lowercased())
+                    allResults.append(restaurant)
+                }
+            }
+            
+            // If using custom query, we might want to stop if we found good results
+            if query != nil && !allResults.isEmpty {
+                break
+            }
+            
+            // Stop if we have enough results (generic search)
+            if query == nil && allResults.count >= 5 {
+                break
+            }
+        }
+        
+        // If still empty or too few, try with larger radius
+        if allResults.count < 3 {
+            print("🍽️ DirectionsService: Few results, trying larger radius (1000m)...")
+            let fallbackQuery = query ?? "restaurant"
+            let largerRadiusResults = await performRestaurantSearch(query: fallbackQuery, coordinate: coordinate, radius: 1000)
+            
+            for restaurant in largerRadiusResults {
+                if !seenNames.contains(restaurant.name.lowercased()) {
+                    seenNames.insert(restaurant.name.lowercased())
+                    allResults.append(restaurant)
+                }
+            }
+        }
+        
+        // Sort by distance and return all (let caller filter and limit)
+        allResults.sort { $0.distance < $1.distance }
+        
+        print("🍽️ DirectionsService: Found \(allResults.count) restaurants near \(coordinate)")
+        return allResults
+    }
+    
+    /// Perform a single restaurant search with given query
+    private func performRestaurantSearch(query: String, coordinate: CLLocationCoordinate2D, radius: CLLocationDistance) async -> [RestaurantSuggestion] {
         let request = MKLocalSearch.Request()
-        request.naturalLanguageQuery = "restaurant"
+        request.naturalLanguageQuery = query
         request.region = MKCoordinateRegion(
             center: coordinate,
             latitudinalMeters: radius,
@@ -168,6 +243,9 @@ class DirectionsService {
                 let itemCoord = item.location.coordinate
                 let distance = calculateDistance(from: coordinate, to: itemCoord)
                 
+                // Extract address from map item (iOS 26+)
+                let address = item.address?.fullAddress ?? ""
+                
                 let restaurant = RestaurantSuggestion(
                     id: UUID().uuidString,
                     name: item.name ?? "Restaurant",
@@ -175,19 +253,16 @@ class DirectionsService {
                     coordinate: itemCoord,
                     distance: distance,
                     phoneNumber: item.phoneNumber,
-                    url: item.url?.absoluteString
+                    url: item.url?.absoluteString,
+                    address: address
                 )
                 restaurants.append(restaurant)
             }
             
-            // Sort by distance
-            restaurants.sort { $0.distance < $1.distance }
-            
-            print("🍽️ DirectionsService: Found \(restaurants.count) restaurants near \(coordinate)")
             return restaurants
             
         } catch {
-            print("❌ DirectionsService: Restaurant search error: \(error.localizedDescription)")
+            print("❌ DirectionsService: Restaurant search error for '\(query)': \(error.localizedDescription)")
             return []
         }
     }
@@ -221,6 +296,10 @@ struct RestaurantSuggestion: Identifiable, Codable {
     let url: String?
     var isAddedToItinerary: Bool = false
     
+    // Additional Apple Maps info
+    var address: String?
+    var priceLevel: Int? // 1-4 ($-$$$$)
+    
     var formattedDistance: String {
         if distance < 1000 {
             return "\(Int(distance))m"
@@ -229,13 +308,43 @@ struct RestaurantSuggestion: Identifiable, Codable {
         }
     }
     
+    var priceLevelString: String {
+        guard let level = priceLevel else { return "" }
+        return String(repeating: "€", count: level)
+    }
+    
+    /// Open restaurant in Apple Maps
+    func openInMaps() {
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let mapItem = MKMapItem(location: location, address: nil)
+        mapItem.name = name
+        mapItem.phoneNumber = phoneNumber
+        if let urlStr = url, let url = URL(string: urlStr) {
+            mapItem.url = url
+        }
+        mapItem.openInMaps(launchOptions: [MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking])
+    }
+    
+    /// Call restaurant phone
+    func callPhone() {
+        guard let phone = phoneNumber?.replacingOccurrences(of: " ", with: ""),
+              let url = URL(string: "tel://\(phone)") else { return }
+        UIApplication.shared.open(url)
+    }
+    
+    /// Open restaurant website
+    func openWebsite() {
+        guard let urlStr = url, let url = URL(string: urlStr) else { return }
+        UIApplication.shared.open(url)
+    }
+    
     // Custom Codable for CLLocationCoordinate2D
     enum CodingKeys: String, CodingKey {
         case id, name, category, distance, phoneNumber, url, isAddedToItinerary
-        case latitude, longitude
+        case latitude, longitude, address, priceLevel
     }
     
-    init(id: String, name: String, category: String, coordinate: CLLocationCoordinate2D, distance: Double, phoneNumber: String?, url: String?, isAddedToItinerary: Bool = false) {
+    init(id: String, name: String, category: String, coordinate: CLLocationCoordinate2D, distance: Double, phoneNumber: String?, url: String?, address: String? = nil, priceLevel: Int? = nil, isAddedToItinerary: Bool = false) {
         self.id = id
         self.name = name
         self.category = category
@@ -243,6 +352,8 @@ struct RestaurantSuggestion: Identifiable, Codable {
         self.distance = distance
         self.phoneNumber = phoneNumber
         self.url = url
+        self.address = address
+        self.priceLevel = priceLevel
         self.isAddedToItinerary = isAddedToItinerary
     }
     
@@ -254,6 +365,8 @@ struct RestaurantSuggestion: Identifiable, Codable {
         distance = try container.decode(Double.self, forKey: .distance)
         phoneNumber = try container.decodeIfPresent(String.self, forKey: .phoneNumber)
         url = try container.decodeIfPresent(String.self, forKey: .url)
+        address = try container.decodeIfPresent(String.self, forKey: .address)
+        priceLevel = try container.decodeIfPresent(Int.self, forKey: .priceLevel)
         isAddedToItinerary = try container.decodeIfPresent(Bool.self, forKey: .isAddedToItinerary) ?? false
         
         let latitude = try container.decode(Double.self, forKey: .latitude)
@@ -269,6 +382,8 @@ struct RestaurantSuggestion: Identifiable, Codable {
         try container.encode(distance, forKey: .distance)
         try container.encodeIfPresent(phoneNumber, forKey: .phoneNumber)
         try container.encodeIfPresent(url, forKey: .url)
+        try container.encodeIfPresent(address, forKey: .address)
+        try container.encodeIfPresent(priceLevel, forKey: .priceLevel)
         try container.encode(isAddedToItinerary, forKey: .isAddedToItinerary)
         try container.encode(coordinate.latitude, forKey: .latitude)
         try container.encode(coordinate.longitude, forKey: .longitude)

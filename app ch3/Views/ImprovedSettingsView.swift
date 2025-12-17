@@ -42,7 +42,7 @@ struct ImprovedSettingsView: View {
                     Text("App Info")
                 }
             }
-            .navigationTitle("Settings")
+            
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {

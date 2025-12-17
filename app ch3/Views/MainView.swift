@@ -11,6 +11,7 @@ import MapKit
 struct MainView: View {
     @StateObject private var viewModel = PlacesViewModel()
     @StateObject private var locationManager = LocationManager()
+    // Refreshed MainView
     
     @State private var selectedTab = 0
     @State private var selectedPlace: Place?
@@ -20,22 +21,11 @@ struct MainView: View {
     @State private var showingTripPlanner = false
     @State private var showingListView = false
     
-    private var navigationTitle: String {
-        switch selectedTab {
-        case 0: return "Home"
-        case 1: return "Map"
-        case 2: return "Your Trips"
-        case 3: return "Favorites"
-        case 4: return "Statistics"
-        default: return "Home"
-        }
-    }
-    
     var body: some View {
         contentView
             .tint(Color.appAccent)
-            .sheet(isPresented: $showingDetail) {
-                detailSheet
+            .sheet(item: $selectedPlace) { place in
+                PlaceDetailView(place: place, userLocation: locationManager.location, viewModel: viewModel)
             }
             .sheet(isPresented: $showingCitySearch) {
                 citySearchSheet
@@ -61,8 +51,6 @@ struct MainView: View {
                         }
                     }
                 }
-                .navigationTitle(navigationTitle)
-                .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     toolbarContent
                 }
@@ -117,7 +105,6 @@ struct MainView: View {
             homeTab
             mapTab
             tripsTab
-            favoritesTab
             statsTab
         }
     }
@@ -152,22 +139,9 @@ struct MainView: View {
     private var tripsTab: some View {
         TripsView(isPresented: .constant(true))
             .tabItem {
-                Label("Trips", systemImage: "airplane")
+                Label("Adventures", systemImage: "suitcase.fill")
             }
             .tag(2)
-    }
-    
-    private var favoritesTab: some View {
-        FavoritesView(
-            viewModel: viewModel,
-            userLocation: locationManager.location,
-            selectedPlace: $selectedPlace,
-            showingDetail: $showingDetail
-        )
-        .tabItem {
-            Label("Favorites", systemImage: "heart.fill")
-        }
-        .tag(3)
     }
     
     private var statsTab: some View {
@@ -175,18 +149,13 @@ struct MainView: View {
             .tabItem {
                 Label("Stats", systemImage: "chart.bar.fill")
             }
-            .tag(4)
+            .tag(3)
     }
     
     @ViewBuilder
     private var filterOverlay: some View {
         if showingFilters {
-            FilterView(viewModel: viewModel)
-                .onTapGesture {
-                    withAnimation(.spring(response: 0.3)) {
-                        showingFilters = false
-                    }
-                }
+            FilterView(viewModel: viewModel, isPresented: $showingFilters)
         }
     }
     

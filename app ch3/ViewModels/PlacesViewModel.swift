@@ -37,6 +37,7 @@ final class PlacesViewModel: ObservableObject {
     private var currentDisplayRegion: MKCoordinateRegion?
     
     @Published var selectedCategories: Set<String> = []
+    @Published var selectedCategoryGroups: Set<CategoryGroup> = []  // Macro-category filters
     @Published var favoriteIDs: Set<Int64> = []
     @Published var visitedIDs: Set<Int64> = []
     @Published var favoritePlacesFull: [Place] = [] // Full Place objects for favorites
@@ -304,7 +305,15 @@ final class PlacesViewModel: ObservableObject {
     var filteredPlaces: [Place] {
         var filtered = validPlaces
         
-        // Filtro per categorie se ce ne sono selezionate
+        // Filter by macro-categories if any are selected
+        if !selectedCategoryGroups.isEmpty {
+            filtered = filtered.filter { place in
+                // Use anyMatch which handles nil tags and shows untagged places
+                CategoryGroup.anyMatch(groups: selectedCategoryGroups, tagsTitle: place.tags_title)
+            }
+        }
+        
+        // Legacy: Filtro per categorie specifiche se ce ne sono selezionate
         if !selectedCategories.isEmpty {
             filtered = filtered.filter { place in
                 guard let category = place.categoryName else { return false }
@@ -455,8 +464,22 @@ final class PlacesViewModel: ObservableObject {
         userDefaults.saveSelectedCategories(selectedCategories)
     }
     
+    /// Toggle macro-category group filter
+    func toggleCategoryGroup(_ group: CategoryGroup) {
+        if selectedCategoryGroups.contains(group) {
+            selectedCategoryGroups.remove(group)
+        } else {
+            selectedCategoryGroups.insert(group)
+        }
+        // Trigger clustering update
+        if let region = currentDisplayRegion {
+            updateClusteredItems(for: region)
+        }
+    }
+    
     func clearCategoryFilters() {
         selectedCategories.removeAll()
+        selectedCategoryGroups.removeAll()
         userDefaults.saveSelectedCategories(selectedCategories)
     }
     
@@ -731,58 +754,78 @@ final class PlacesViewModel: ObservableObject {
     
     // MARK: - Clustering
     
+    // Task to manage clustering cancellation
+    private var clusteringTask: Task<Void, Never>?
+    
     func updateClusteredItems(for region: MKCoordinateRegion) {
-        let places = filteredPlaces
-        guard !places.isEmpty else {
+        // 1. Capture data on Main Thread
+        let placesToCluster = filteredPlaces // Access logic on MainActor
+        
+        // 2. Cancel previous task
+        clusteringTask?.cancel()
+        
+        guard !placesToCluster.isEmpty else {
             clusteredItems = []
             return
         }
         
-        // Soglia di distanza per raggruppare (dipende dallo zoom)
-        // Più alto è il divisore, più i pin si separano facilmente
-        // Aumentato da /30 a /80 per mostrare più pin individuali
-        let threshold = region.span.latitudeDelta / 80.0
-        
-        var items: [MapItem] = []
-        var processedIndices = Set<Int>()
-        
-        for i in 0..<places.count {
-            if processedIndices.contains(i) { continue }
+        // 3. Detach heavy work to background thread
+        clusteringTask = Task.detached(priority: .userInitiated) { [weak self] in
+            // Use local copies for thread safety
+            let threshold = region.span.latitudeDelta / 80.0
+            var items: [MapItem] = []
+            var processedIndices = Set<Int>()
             
-            let placeA = places[i]
-            guard let coordA = placeA.coordinate else { continue }
-            
-            var clusterPlaces: [Place] = [placeA]
-            processedIndices.insert(i)
-            
-            // Cerca vicini
-            for j in (i + 1)..<places.count {
-                if processedIndices.contains(j) { continue }
+            // Heavy O(N^2) Loop
+            for i in 0..<placesToCluster.count {
+                if Task.isCancelled { return }
                 
-                let placeB = places[j]
-                guard let coordB = placeB.coordinate else { continue }
+                if processedIndices.contains(i) { continue }
                 
-                let latDiff = abs(coordA.latitude - coordB.latitude)
-                let lngDiff = abs(coordA.longitude - coordB.longitude)
+                let placeA = placesToCluster[i]
+                // Access primitives directly to avoid "Main Actor Isolated" error on .coordinate
+                guard let latA = placeA.coordinates_lat, let lngA = placeA.coordinates_lng else { continue }
                 
-                if latDiff < threshold && lngDiff < threshold {
-                    clusterPlaces.append(placeB)
-                    processedIndices.insert(j)
+                var clusterPlaces: [Place] = [placeA]
+                processedIndices.insert(i)
+                
+                // Search neighbors
+                for j in (i + 1)..<placesToCluster.count {
+                    if processedIndices.contains(j) { continue }
+                    
+                    let placeB = placesToCluster[j]
+                    guard let latB = placeB.coordinates_lat, let lngB = placeB.coordinates_lng else { continue }
+                    
+                    let latDiff = abs(latA - latB)
+                    let lngDiff = abs(lngA - lngB)
+                    
+                    if latDiff < threshold && lngDiff < threshold {
+                        clusterPlaces.append(placeB)
+                        processedIndices.insert(j)
+                    }
+                }
+                
+                if clusterPlaces.count > 1 {
+                    // Create cluster CENTER
+                    let avgLat = clusterPlaces.reduce(0.0) { $0 + ($1.coordinates_lat ?? 0) } / Double(clusterPlaces.count)
+                    let avgLng = clusterPlaces.reduce(0.0) { $0 + ($1.coordinates_lng ?? 0) } / Double(clusterPlaces.count)
+                    let center = CLLocationCoordinate2D(latitude: avgLat, longitude: avgLng)
+                    
+                    items.append(.cluster(id: UUID().uuidString, coordinate: center, places: clusterPlaces))
+                } else {
+                    items.append(.place(placeA))
                 }
             }
             
-            if clusterPlaces.count > 1 {
-                // Crea cluster
-                let avgLat = clusterPlaces.reduce(0.0) { $0 + ($1.coordinate?.latitude ?? 0) } / Double(clusterPlaces.count)
-                let avgLng = clusterPlaces.reduce(0.0) { $0 + ($1.coordinate?.longitude ?? 0) } / Double(clusterPlaces.count)
-                let center = CLLocationCoordinate2D(latitude: avgLat, longitude: avgLng)
-                
-                items.append(.cluster(id: UUID().uuidString, coordinate: center, places: clusterPlaces))
-            } else {
-                items.append(.place(placeA))
+            // 4. Update UI on MainActor
+            // Freeze 'items' to let (immutable) to satisfy "captured var" check
+            let resultItems = items 
+            
+            if !Task.isCancelled {
+                await MainActor.run { [weak self] in
+                    self?.clusteredItems = resultItems
+                }
             }
         }
-        
-        self.clusteredItems = items
     }
 }

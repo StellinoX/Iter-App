@@ -14,19 +14,24 @@ struct PlacesListView: View {
     @Binding var selectedPlace: Place?
     @Binding var showingDetail: Bool
     
+    // Apply all filters including unvisited, distance, and sorting
+    private var placesToDisplay: [Place] {
+        viewModel.getFilteredAndSortedPlaces(userLocation: userLocation)
+    }
+    
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 16) {
-                if viewModel.isLoading && viewModel.filteredPlaces.isEmpty {
+                if viewModel.isLoading && placesToDisplay.isEmpty {
                     // Loading skeleton
                     ForEach(0..<5, id: \.self) { _ in
                         PlaceCardSkeleton()
                     }
-                } else if viewModel.filteredPlaces.isEmpty {
+                } else if placesToDisplay.isEmpty {
                     // Empty state
                     EmptyPlacesView(searchText: viewModel.searchText)
                 } else {
-                    ForEach(viewModel.filteredPlaces) { place in
+                    ForEach(placesToDisplay) { place in
                         PlaceCard(
                             place: place,
                             userLocation: userLocation,
@@ -34,14 +39,13 @@ struct PlacesListView: View {
                         )
                         .onTapGesture {
                             selectedPlace = place
-                            showingDetail = true
                         }
                     }
                 }
             }
             .padding()
         }
-        .background(Color.appBackground)
+        .background(Color(hex: "0f0720"))
     }
 }
 

@@ -192,9 +192,9 @@ struct ZoomableImageView: View {
                     VStack(spacing: 12) {
                         Image(systemName: "photo")
                             .font(.system(size: 50))
-                            .foregroundColor(.gray)
+                            .foregroundColor(.white.opacity(0.7))
                         Text("Failed to load image")
-                            .foregroundColor(.gray)
+                            .foregroundColor(.white.opacity(0.7))
                     }
                     .frame(width: geometry.size.width, height: geometry.size.height)
                     
@@ -212,29 +212,57 @@ extension Place {
         var urls: [String] = []
         
         // Add cover image first
-        if let cover = image_cover {
+        if let cover = image_cover, !cover.isEmpty {
             urls.append(cover)
         }
         
-        // Parse images JSON field if it exists
-        if let imagesString = images {
-            // Try parsing as JSON array
-            if let data = imagesString.data(using: .utf8),
-               let parsed = try? JSONDecoder().decode([String].self, from: data) {
-                urls.append(contentsOf: parsed.filter { !urls.contains($0) })
-            } else {
-                // Try comma-separated
-                let separated = imagesString.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
-                urls.append(contentsOf: separated.filter { !urls.contains($0) && !$0.isEmpty })
+        // Parse images field if it exists
+        if let imagesString = images, !imagesString.isEmpty {
+            // URLs are concatenated without separator - split on https://
+            let components = imagesString.components(separatedBy: "https://")
+            
+            for component in components where !component.isEmpty {
+                let url = "https://" + component
+                
+                // Only include h:400 quality images (skip thumbnails 80x80 and larger 1200px versions)
+                if url.contains("h:400") && !urls.contains(url) {
+                    urls.append(url)
+                }
             }
         }
         
-        // Add thumbnail as fallback
-        if urls.isEmpty, let thumbnail = thumbnail_url {
+        // Fallback to thumbnail if no images
+        if urls.isEmpty, let thumbnail = thumbnail_url, !thumbnail.isEmpty {
             urls.append(thumbnail)
         }
         
-        return urls
+        // Remove duplicates based on the unique image ID in the URL
+        var uniqueUrls: [String] = []
+        var seenImageIds: Set<String> = []
+        
+        for url in urls {
+            let imageId = extractImageId(from: url)
+            if !seenImageIds.contains(imageId) {
+                seenImageIds.insert(imageId)
+                uniqueUrls.append(url)
+            }
+        }
+        
+        return uniqueUrls
+    }
+    
+    private func extractImageId(from url: String) -> String {
+        // The unique part is the last segment of the URL path (before .jpg)
+        // Example: .../aHR0cHM6Ly9hdGxhcy.../uniqueImageId.jpg
+        if let lastSlash = url.lastIndex(of: "/") {
+            let filename = String(url[url.index(after: lastSlash)...])
+            // Remove extension
+            if let dotIndex = filename.lastIndex(of: ".") {
+                return String(filename[..<dotIndex])
+            }
+            return filename
+        }
+        return url
     }
 }
 

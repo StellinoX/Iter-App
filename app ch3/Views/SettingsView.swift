@@ -26,7 +26,7 @@ struct SettingsView: View {
                                 .foregroundColor(.white)
                             Text("Get notified when near hidden gems")
                                 .font(.caption)
-                                .foregroundColor(.gray)
+                                .foregroundColor(.white.opacity(0.7))
                         }
                     }
                 }
@@ -45,7 +45,7 @@ struct SettingsView: View {
                         .foregroundColor(.white)
                     Spacer()
                     Text("1.0.0")
-                        .foregroundColor(.gray)
+                        .foregroundColor(.white.opacity(0.7))
                 }
                 
                 Link(destination: URL(string: "https://example.com/privacy")!) {
@@ -54,7 +54,7 @@ struct SettingsView: View {
                             .foregroundColor(.white)
                         Spacer()
                         Image(systemName: "arrow.up.right.square")
-                            .foregroundColor(.gray)
+                            .foregroundColor(.white.opacity(0.7))
                     }
                 }
             } header: {
@@ -89,8 +89,8 @@ struct SettingsView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(Color.appBackground)
-        .navigationTitle("Settings")
+        .background(Color(hex: "0f0720"))
+        
         .onAppear {
             notificationsEnabled = notificationManager.isEnabled
         }

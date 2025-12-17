@@ -9,10 +9,9 @@ import SwiftUI
 
 struct FilterView: View {
     @ObservedObject var viewModel: PlacesViewModel
-    @Environment(\.dismiss) var dismiss
+    @Binding var isPresented: Bool
     
     @State private var maxDistance: Double = UserDefaultsManager.shared.maxDistanceFilter ?? 100
-    @State private var hasDistanceFilter: Bool = UserDefaultsManager.shared.maxDistanceFilter != nil
     @State private var sortOrder: SortOrder = UserDefaultsManager.shared.sortOrder
     @State private var showOnlyUnvisited: Bool = UserDefaultsManager.shared.showOnlyUnvisited
     
@@ -51,12 +50,7 @@ struct FilterView: View {
                 // Content
                 ScrollView {
                     VStack(spacing: 20) {
-                        // Sort Order Section
-                        sortSection
-                        
-                        divider
-                        
-                        // Distance Filter Section
+                        // Distance Filter Section (simplified - just slider)
                         distanceSection
                         
                         divider
@@ -128,37 +122,30 @@ struct FilterView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "location.circle")
-                    .foregroundColor(.appAccent)
-                Text("Max Distance")
+                    .foregroundColor(.white)
+                Text("Distance")
                     .font(.headline)
                     .foregroundColor(.white)
                 
                 Spacer()
                 
-                Toggle("", isOn: $hasDistanceFilter)
-                    .tint(.appAccent)
-                    .labelsHidden()
+                Text("\(Int(maxDistance)) km")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(Color(hex: "a855f7"))
             }
             
-            if hasDistanceFilter {
-                VStack(spacing: 8) {
-                    Slider(value: $maxDistance, in: 1...200, step: 1)
-                        .tint(.appAccent)
-                    
-                    HStack {
-                        Text("1 km")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        Spacer()
-                        Text("\(Int(maxDistance)) km")
-                            .font(.caption.weight(.semibold))
-                            .foregroundColor(.appAccent)
-                        Spacer()
-                        Text("200 km")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                }
+            // Just the slider bar
+            Slider(value: $maxDistance, in: 1...200, step: 1)
+                .tint(Color(hex: "a855f7"))
+            
+            HStack {
+                Text("1 km")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.5))
+                Spacer()
+                Text("200 km")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.5))
             }
         }
     }
@@ -190,27 +177,24 @@ struct FilterView: View {
                 
                 Spacer()
                 
-                if !viewModel.selectedCategories.isEmpty {
-                    Text("\(viewModel.selectedCategories.count) selected")
+                if !viewModel.selectedCategoryGroups.isEmpty {
+                    Text("\(viewModel.selectedCategoryGroups.count) selected")
                         .font(.caption)
                         .foregroundColor(.appAccent)
                 }
             }
             
-            if viewModel.availableCategories.isEmpty {
-                Text("No categories available")
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-                    .padding(.vertical, 8)
-            } else {
-                FlowLayout(spacing: 8) {
-                    ForEach(viewModel.availableCategories.sorted(), id: \.self) { category in
-                        CategoryChip(
-                            category: category,
-                            isSelected: viewModel.selectedCategories.contains(category),
-                            action: { viewModel.toggleCategory(category) }
-                        )
-                    }
+            // Macro-category grid (2 columns)
+            LazyVGrid(columns: [
+                GridItem(.flexible()),
+                GridItem(.flexible())
+            ], spacing: 12) {
+                ForEach(CategoryGroup.allCases) { group in
+                    MacroCategoryButton(
+                        group: group,
+                        isSelected: viewModel.selectedCategoryGroups.contains(group),
+                        action: { viewModel.toggleCategoryGroup(group) }
+                    )
                 }
             }
         }
@@ -261,20 +245,21 @@ struct FilterView: View {
     
     private func saveAndDismiss() {
         UserDefaultsManager.shared.sortOrder = sortOrder
-        UserDefaultsManager.shared.maxDistanceFilter = hasDistanceFilter ? maxDistance : nil
+        UserDefaultsManager.shared.maxDistanceFilter = maxDistance
         UserDefaultsManager.shared.showOnlyUnvisited = showOnlyUnvisited
         viewModel.applyFilters(
             sortOrder: sortOrder,
-            maxDistance: hasDistanceFilter ? maxDistance : nil,
+            maxDistance: maxDistance,
             showOnlyUnvisited: showOnlyUnvisited
         )
-        dismiss()
+        withAnimation(.spring(response: 0.3)) {
+            isPresented = false
+        }
     }
     
     private func resetFilters() {
         sortOrder = .distance
-        hasDistanceFilter = false
-        maxDistance = 100
+        maxDistance = 200  // Max distance = show all
         showOnlyUnvisited = false
         viewModel.clearCategoryFilters()
     }
@@ -296,6 +281,36 @@ struct CategoryChip: View {
                 .padding(.vertical, 8)
                 .background(isSelected ? Color.appAccent : Color.white.opacity(0.1))
                 .cornerRadius(16)
+        }
+    }
+}
+
+// MARK: - Macro Category Button
+
+struct MacroCategoryButton: View {
+    let group: CategoryGroup
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: group.icon)
+                    .font(.system(size: 16))
+                Text(group.rawValue)
+                    .font(.subheadline.weight(.medium))
+            }
+            .foregroundColor(isSelected ? .black : .white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isSelected ? group.color : Color.white.opacity(0.1))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isSelected ? group.color : Color.white.opacity(0.2), lineWidth: 1)
+            )
         }
     }
 }
@@ -344,6 +359,6 @@ struct FlowLayout: Layout {
 }
 
 #Preview {
-    FilterView(viewModel: PlacesViewModel())
+    FilterView(viewModel: PlacesViewModel(), isPresented: .constant(true))
 }
 

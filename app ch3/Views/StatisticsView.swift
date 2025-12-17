@@ -60,13 +60,10 @@ struct StatisticsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-                // Global/Regional Stats
-                regionalStatsSection
+                // Global Visited Progress Ring (worldwide)
+                globalVisitedSection
                 
-                // Local/Nearby Progress Ring
-                progressSection
-                
-                // Quick Stats (your totals)
+                // Quick Stats (In View + Favorites only)
                 quickStatsSection
                 
                 // Category Breakdown
@@ -77,63 +74,71 @@ struct StatisticsView: View {
             }
             .padding()
         }
-        .background(Color.appBackground)
-        .navigationTitle("Statistics")
-        .navigationBarTitleDisplayMode(.large)
+        .background(Color(hex: "0f0720"))
         .task {
             await viewModel.fetchDistinctValues()
             await viewModel.fetchRegionalStats()
         }
     }
     
-    // MARK: - Regional Stats Section
+    // MARK: - Global Visited Section (replaces Near You and Global Statistics)
     
-    private var regionalStatsSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("🌍 Global Statistics")
-                .font(.title3.weight(.bold))
-                .foregroundColor(.white)
-            
-            LazyVGrid(columns: [
-                GridItem(.flexible()),
-                GridItem(.flexible())
-            ], spacing: 12) {
-                RegionCard(
-                    icon: "globe",
-                    title: "World",
-                    total: viewModel.regionalStats.worldTotal,
-                    visited: viewModel.visitedIDs.count,
-                    color: .blue
-                )
-                
-                RegionCard(
-                    icon: "building.columns.fill",
-                    title: "Europe",
-                    total: viewModel.regionalStats.europeTotal,
-                    visited: 0, // Will calculate
-                    color: .green
-                )
-                
-                RegionCard(
-                    icon: "mountain.2.fill",
-                    title: "Americas",
-                    total: viewModel.regionalStats.americasTotal,
-                    visited: 0,
-                    color: .orange
-                )
-                
-                RegionCard(
-                    icon: "flag.fill",
-                    title: "Asia & Russia",
-                    total: viewModel.regionalStats.asiaTotal,
-                    visited: 0,
-                    color: .red
-                )
+    private var globalVisitedSection: some View {
+        VStack(spacing: 16) {
+            // Section header
+            HStack {
+                Image(systemName: "globe")
+                    .foregroundColor(.white)
+                Text("Places Visited Worldwide")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                Spacer()
             }
+            
+            ZStack {
+                // Background circle
+                Circle()
+                    .stroke(Color.white.opacity(0.2), lineWidth: 20)
+                    .frame(width: 160, height: 160)
+                
+                // Progress circle
+                Circle()
+                    .trim(from: 0, to: globalCompletionPercentage / 100)
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color(hex: "a855f7"), Color(hex: "7c3aed")],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        style: StrokeStyle(lineWidth: 20, lineCap: .round)
+                    )
+                    .frame(width: 160, height: 160)
+                    .rotationEffect(.degrees(-90))
+                    .animation(.spring(response: 0.8), value: globalCompletionPercentage)
+                
+                // Center text
+                VStack(spacing: 4) {
+                    Text("\(visitedCount)")
+                        .font(.system(size: 36, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    Text("visited")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.7))
+                }
+            }
+            
+            Text("of \(viewModel.regionalStats.worldTotal) places discovered")
+                .font(.caption)
+                .foregroundColor(.white.opacity(0.7))
         }
         .padding()
-        .background(Color(.systemGray6).opacity(0.3))
+        .background(Color.white.opacity(0.1))
         .cornerRadius(16)
+    }
+    
+    private var globalCompletionPercentage: Double {
+        guard viewModel.regionalStats.worldTotal > 0 else { return 0 }
+        return Double(visitedCount) / Double(viewModel.regionalStats.worldTotal) * 100
     }
     
     // MARK: - Subviews
@@ -150,7 +155,7 @@ struct StatisticsView: View {
                 if let city = viewModel.currentCity {
                     Text("• \(city)")
                         .font(.subheadline)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.white.opacity(0.7))
                 }
                 Spacer()
             }
@@ -183,16 +188,17 @@ struct StatisticsView: View {
                         .foregroundColor(.white)
                     Text("\(nearbyVisitedCount)/\(nearbyPlacesCount)")
                         .font(.caption)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.white.opacity(0.7))
                 }
             }
             
             Text("Places explored in view")
                 .font(.caption)
-                .foregroundColor(.gray)
+                .foregroundColor(.white.opacity(0.7))
         }
         .padding()
-        .background(Color(.systemGray6).opacity(0.3))
+        .background(Color.white.opacity(0.1))
+
         .cornerRadius(16)
     }
     
@@ -201,22 +207,15 @@ struct StatisticsView: View {
             StatCard(
                 icon: "mappin.circle.fill",
                 value: "\(nearbyPlacesCount)",
-                label: "In View",
-                color: .blue
-            )
-            
-            StatCard(
-                icon: "checkmark.circle.fill",
-                value: "\(visitedCount)",
-                label: "Visited",
-                color: .appVisited
+                label: "Around You",
+                color: Color(hex: "a855f7")
             )
             
             StatCard(
                 icon: "heart.fill",
                 value: "\(favoriteCount)",
                 label: "Favorites",
-                color: .red
+                color: Color(hex: "f472b6")
             )
         }
     }
@@ -230,12 +229,12 @@ struct StatisticsView: View {
                 Spacer()
                 Text("\(categoryBreakdown.count) categories")
                     .font(.caption)
-                    .foregroundColor(.gray)
+                    .foregroundColor(.white.opacity(0.7))
             }
             
             if categoryBreakdown.isEmpty {
                 Text("No categories yet")
-                    .foregroundColor(.gray)
+                    .foregroundColor(.white.opacity(0.7))
                     .frame(maxWidth: .infinity)
                     .padding()
             } else {
@@ -272,7 +271,8 @@ struct StatisticsView: View {
             }
         }
         .padding()
-        .background(Color(.systemGray6).opacity(0.3))
+        .background(Color.white.opacity(0.1))
+
         .cornerRadius(16)
     }
     
@@ -320,7 +320,8 @@ struct StatisticsView: View {
             }
         }
         .padding()
-        .background(Color(.systemGray6).opacity(0.3))
+        .background(Color.white.opacity(0.1))
+
         .cornerRadius(16)
     }
 }
@@ -345,11 +346,12 @@ struct StatCard: View {
             
             Text(label)
                 .font(.caption)
-                .foregroundColor(.gray)
+                .foregroundColor(.white.opacity(0.7))
         }
         .frame(maxWidth: .infinity)
         .padding()
-        .background(Color(.systemGray6).opacity(0.3))
+        .background(Color.white.opacity(0.1))
+
         .cornerRadius(12)
     }
 }
@@ -387,12 +389,13 @@ struct AchievementBadge: View {
             
             Text(description)
                 .font(.caption2)
-                .foregroundColor(.gray)
+                .foregroundColor(.white.opacity(0.7))
                 .multilineTextAlignment(.center)
         }
         .padding()
         .frame(maxWidth: .infinity)
-        .background(Color(.systemGray6).opacity(0.2))
+        .background(Color.white.opacity(0.1))
+
         .cornerRadius(12)
         .opacity(isUnlocked ? 1 : 0.7)
     }
@@ -449,7 +452,7 @@ struct RegionCard: View {
             HStack {
                 Text("\(visited) visited")
                     .font(.caption2)
-                    .foregroundColor(.gray)
+                    .foregroundColor(.white.opacity(0.7))
                 
                 Spacer()
                 
@@ -459,7 +462,8 @@ struct RegionCard: View {
             }
         }
         .padding()
-        .background(Color(.systemGray6).opacity(0.3))
+        .background(Color.white.opacity(0.1))
+
         .cornerRadius(12)
     }
 }

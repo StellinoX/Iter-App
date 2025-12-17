@@ -14,16 +14,18 @@ class GeminiService: ObservableObject {
     @Published var error: String?
     
     // Gemini API key
-    private let apiKey = "AIzaSyCV59q-dDxnw-150KaJpTI2pPIlSUMiVAM"
+    private let apiKey = Secrets.geminiApiKey
     // Updated to use gemini-1.5-flash (more reliable)
     private let baseURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
     
     /// Generate itinerary using places from the database
-    func generateItinerary(city: String, days: Int, places: [Place], hotelAddress: String = "") async -> [TripDay]? {
+    func generateItinerary(city: String, days: Int, places: [Place], hotelAddress: String = "", pace: String = "Balanced", vibe: String = "Casual") async -> [TripDay]? {
         isLoading = true
         error = nil
         
         print("🤖 GeminiService: Starting itinerary generation for \(city), \(days) days, \(places.count) places")
+        print("🤖 GeminiService: Preferences - Pace: \(pace), Vibe: \(vibe)")
+        
         if !hotelAddress.isEmpty {
             print("🤖 GeminiService: Hotel: \(hotelAddress)")
         }
@@ -45,20 +47,23 @@ class GeminiService: ObservableObject {
         let hotelInfo = hotelAddress.isEmpty ? "" : "\nHotel/Starting point: \(hotelAddress). Start each day from here and return in the evening."
         
         let prompt = """
-        Sei un esperto di viaggi. Crea un itinerario di \(days) giorni per \(city).
+        You are a travel expert. Create a \(days)-day itinerary for \(city).
+        Travel Style: \(pace) pace.
+        Dining Preference: \(vibe) restaurants.
         \(hotelInfo)
         
-        LUOGHI DISPONIBILI (con coordinate per calcolare le distanze):
+        AVAILABLE PLACES (with coordinates for distance calculation):
         \(placesList)
         
-        ISTRUZIONI:
-        1. Organizza i luoghi per vicinanza geografica (usa le coordinate)
-        2. Calcola tempi di percorrenza realistici tra i luoghi
-        3. Suggerisci mezzi pubblici reali (metro, bus, tram) quando possibile
-        4. Per ogni spostamento indica: modo, durata, e dettagli (es. "Metro A direzione Battistini")
+        INSTRUCTIONS:
+        1. Organize places by geographical proximity (use coordinates)
+        2. Respect the \(pace) pace (don't overload days if Relaxed)
+        3. Calculate realistic travel times between places
+        4. Suggest real public transport (metro, bus, tram) when possible
+        5. For each movement indicate: mode, duration, and details (e.g. "Metro A direction Battistini")
         
-        Rispondi SOLO in JSON valido:
-        {"days":[{"day":1,"activities":[{"placeIndex":1,"startTime":"09:00","duration":"2h","transportMode":"metro","transportDuration":"15 min","transportDetails":"Metro A da Termini a Spagna"}]}]}
+        Reply ONLY in valid JSON:
+        {"days":[{"day":1,"activities":[{"placeIndex":1,"startTime":"09:00","duration":"2h","transportMode":"metro","transportDuration":"15 min","transportDetails":"Metro A from Termini to Spagna"}]}]}
         """
         
         // Make API request
@@ -161,9 +166,11 @@ class GeminiService: ObservableObject {
                 var activity = TripActivity(
                     placeName: place.displayName,
                     startTime: activityData["startTime"] as? String ?? "09:00",
-                    duration: activityData["duration"] as? String ?? "1h"
+                    duration: activityData["duration"] as? String ?? "1h",
+                    placeId: place.id,
+                    coordinatesLat: place.coordinates_lat,
+                    coordinatesLng: place.coordinates_lng
                 )
-                activity.placeId = place.id
                 
                 if let mode = activityData["transportMode"] as? String {
                     activity.transportMode = TransportMode(rawValue: mode)
@@ -200,9 +207,11 @@ class GeminiService: ObservableObject {
                     var activity = TripActivity(
                         placeName: place.displayName,
                         startTime: times[activityIndex],
-                        duration: durations[activityIndex]
+                        duration: durations[activityIndex],
+                        placeId: place.id,
+                        coordinatesLat: place.coordinates_lat,
+                        coordinatesLng: place.coordinates_lng
                     )
-                    activity.placeId = place.id
                     activity.transportMode = .walking
                     activity.transportDuration = "10 min"
                     activity.notes = place.description
@@ -229,23 +238,23 @@ class GeminiService: ObservableObject {
     func enhanceDescription(placeName: String, originalDescription: String?, wikipediaInfo: String?, city: String?) async -> String? {
         
         let context = """
-        Nome luogo: \(placeName)
-        Città: \(city ?? "non specificata")
-        Descrizione originale: \(originalDescription ?? "nessuna")
-        Info Wikipedia: \(wikipediaInfo ?? "nessuna")
+        Place Name: \(placeName)
+        City: \(city ?? "unspecified")
+        Original Description: \(originalDescription ?? "none")
+        Wikipedia Info: \(wikipediaInfo ?? "none")
         """
         
         let prompt = """
-        Sei una guida turistica esperta. Riscrivi la descrizione di questo luogo in modo accattivante e informativo.
+        You are an expert tour guide. Rewrite the description of this place to be engaging and informative.
 
         \(context)
 
-        Scrivi una descrizione di 3-4 frasi che includa:
-        1. Cosa rende speciale questo luogo
-        2. Un fatto storico o curiosità interessante  
-        3. Un consiglio pratico per visitarlo
+        Write a 3-4 sentence description including:
+        1. What makes this place special
+        2. An interesting historical fact or curiosity
+        3. A practical tip for visiting
 
-        Rispondi SOLO con la descrizione, senza intestazioni o formattazione.
+        Reply ONLY with the description, without headers or formatting.
         """
         
         guard let url = URL(string: "\(baseURL)?key=\(apiKey)") else {
@@ -320,23 +329,23 @@ class GeminiService: ObservableObject {
         let selectedList = selectedPlaces.map { $0.displayName }.joined(separator: ", ")
         
         let prompt = """
-        Sei un esperto di viaggi. Scegli i \(count) luoghi MIGLIORI per un itinerario turistico.
+        You are a travel expert. Choose the \(count) BEST places for a tourist itinerary.
 
-        PUNTO DI PARTENZA (Hotel/Airbnb): \(hotelAddress.isEmpty ? "Centro città" : hotelAddress)
+        STARTING POINT (Hotel/Airbnb): \(hotelAddress.isEmpty ? "City Center" : hotelAddress)
         
-        LUOGHI GIÀ SELEZIONATI: \(selectedList.isEmpty ? "Nessuno" : selectedList)
+        ALREADY SELECTED PLACES: \(selectedList.isEmpty ? "None" : selectedList)
         
-        LUOGHI DISPONIBILI:
+        AVAILABLE PLACES:
         \(availableList)
         
-        CRITERI DI SCELTA:
-        1. Vicinanza geografica tra i luoghi (usa le coordinate)
-        2. Varietà di categorie (non tutti musei, non tutte chiese)
-        3. Complementarietà con i luoghi già selezionati
-        4. Importanza/interesse turistico
+        SELECTION CRITERIA:
+        1. Geographical proximity between places (use coordinates)
+        2. Variety of categories (not all museums, not all churches)
+        3. Complementarity with already selected places
+        4. Tourist importance/interest
         
-        Rispondi SOLO con gli ID dei \(count) luoghi scelti, separati da virgola.
-        Esempio: 123,456,789,101
+        Reply ONLY with the IDs of the \(count) chosen places, separated by commas.
+        Example: 123,456,789,101
         """
         
         guard let url = URL(string: "\(baseURL)?key=\(apiKey)") else {

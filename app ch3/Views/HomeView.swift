@@ -18,6 +18,12 @@ struct HomeView: View {
     
     // Cache trending places to avoid re-shuffle on each render
     @State private var cachedTrendingPlaces: [Place] = []
+    @State private var showingAllFavorites = false
+    
+    // Favorite places from viewModel
+    private var favoritePlaces: [Place] {
+        viewModel.validPlaces.filter { viewModel.isFavorite($0.id) }
+    }
     
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
@@ -76,27 +82,33 @@ struct HomeView: View {
                 // Header
                 headerSection
                 
-                // Plan Trip CTA
-                planTripCTA
+
                 
-                // Loading state
+                // Favorites Section (FIRST - with Show All)
+                if !favoritePlaces.isEmpty {
+                    favoritesSection
+                }
+                
+                // Show skeleton sections during loading
                 if viewModel.isLoading && viewModel.places.isEmpty {
-                    loadingState
-                }
-                
-                // Trending Places
-                if !trendingPlaces.isEmpty {
-                    placesSection(title: "Trending", icon: "flame.fill", places: trendingPlaces)
-                }
-                
-                // Nearby Places
-                if !nearbyPlaces.isEmpty {
-                    placesSection(title: "Nearby", icon: "location.fill", places: nearbyPlaces)
-                }
-                
-                // Suggested for You
-                if !suggestedPlaces.isEmpty {
-                    placesSection(title: "Suggested for You", icon: "sparkles", places: suggestedPlaces)
+                    skeletonSection(title: "Trending", icon: "flame.fill")
+                    skeletonSection(title: "Nearby", icon: "location.fill")
+                    skeletonSection(title: "Suggested", icon: "sparkles")
+                } else {
+                    // Trending Places
+                    if !trendingPlaces.isEmpty {
+                        placesSection(title: "Trending", icon: "flame.fill", places: trendingPlaces)
+                    }
+                    
+                    // Nearby Places
+                    if !nearbyPlaces.isEmpty {
+                        placesSection(title: "Nearby", icon: "location.fill", places: nearbyPlaces)
+                    }
+                    
+                    // Suggested for You
+                    if !suggestedPlaces.isEmpty {
+                        placesSection(title: "Suggested for You", icon: "sparkles", places: suggestedPlaces)
+                    }
                 }
                 
                 // Empty state (no places after loading)
@@ -108,15 +120,18 @@ struct HomeView: View {
             }
             .padding(.horizontal)
         }
-        .background(Color.appBackground)
-        .task {
-            // Load places at startup
+        .background(Color(hex: "0f0720"))
+        .task(id: "initial-load") {
+            // Primary load - runs immediately
             await loadPlacesForHome()
         }
         .onAppear {
-            // Backup: trigger load if task didn't run
-            if !hasLoadedInitially && viewModel.places.isEmpty {
-                Task {
+            // Backup: trigger load if task didn't run or failed
+            Task {
+                // Small delay to let .task run first
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if viewModel.places.isEmpty && !viewModel.isLoading {
+                    print("🔄 HomeView: Backup load triggered")
                     await loadPlacesForHome()
                 }
             }
@@ -124,10 +139,19 @@ struct HomeView: View {
     }
     
     @State private var hasLoadedInitially = false
+    @State private var isLoadingHome = false
     
     private func loadPlacesForHome() async {
-        // Only skip if we've successfully loaded before AND have places
-        guard !hasLoadedInitially || viewModel.places.isEmpty else { return }
+        // Prevent concurrent loads
+        guard !isLoadingHome else { return }
+        isLoadingHome = true
+        
+        defer { isLoadingHome = false }
+        
+        // Skip if we already have data
+        if hasLoadedInitially && !viewModel.places.isEmpty {
+            return
+        }
         
         print("🏠 HomeView: Loading places...")
         
@@ -146,7 +170,11 @@ struct HomeView: View {
             )
         }
         
-        await viewModel.fetchPlacesInRegion(region)
+        // Fetch places and favorites in parallel
+        async let placesTask: () = viewModel.fetchPlacesInRegion(region)
+        async let favoritesTask: () = viewModel.fetchFavoritePlaces()
+        
+        _ = await (placesTask, favoritesTask)
         
         hasLoadedInitially = true
         
@@ -155,7 +183,7 @@ struct HomeView: View {
             cachedTrendingPlaces = computeTrendingPlaces()
         }
         
-        print("🏠 HomeView: Loaded \(viewModel.places.count) places")
+        print("🏠 HomeView: Loaded \(viewModel.places.count) places, \(viewModel.favoritePlacesFull.count) favorites")
     }
     
     private func computeTrendingPlaces() -> [Place] {
@@ -184,7 +212,7 @@ struct HomeView: View {
                 
                 Text("Where will you explore today?")
                     .font(.subheadline)
-                    .foregroundColor(.gray)
+                    .foregroundColor(.white.opacity(0.7))
             }
             
             Spacer()
@@ -192,7 +220,7 @@ struct HomeView: View {
             NavigationLink(destination: SettingsView()) {
                 Image(systemName: "gearshape.fill")
                     .font(.title2)
-                    .foregroundColor(.gray)
+                    .foregroundColor(.white.opacity(0.7))
             }
         }
         .padding(.top, 20)
@@ -202,7 +230,7 @@ struct HomeView: View {
         Button(action: onPlanTrip) {
             HStack {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Plan Your Trip")
+                    Text("Plan Your Adventure")
                         .font(.title3.weight(.bold))
                         .foregroundColor(.black)
                     
@@ -229,18 +257,7 @@ struct HomeView: View {
         }
     }
     
-    private var loadingState: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .controlSize(.large)
-                .tint(.appAccent)
-            Text("Discovering hidden gems...")
-                .font(.subheadline)
-                .foregroundColor(.gray)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 60)
-    }
+
     
     private var emptyState: some View {
         VStack(spacing: 16) {
@@ -254,7 +271,7 @@ struct HomeView: View {
             
             Text("Try moving to a different area on the map")
                 .font(.subheadline)
-                .foregroundColor(.gray)
+                .foregroundColor(.white.opacity(0.7))
             
             Button {
                 hasLoadedInitially = false
@@ -273,24 +290,57 @@ struct HomeView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)
     }
-    
-    private func placesSection(title: String, icon: String, places: [Place]) -> some View {
+    // MARK: - Favorites Section (with Show All)
+    private var favoritesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Image(systemName: icon)
-                    .foregroundColor(.appAccent)
-                Text(title)
+                Image(systemName: "heart.fill")
+                    .foregroundColor(.white)
+                Text("Favorites")
                     .font(.headline)
                     .foregroundColor(.white)
                 Spacer()
                 
                 Button {
-                    // Show all
+                    showingAllFavorites = true
                 } label: {
-                    Text("See All")
+                    Text("Show all")
                         .font(.caption)
-                        .foregroundColor(.appAccent)
+                        .foregroundColor(.white.opacity(0.7))
                 }
+            }
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(favoritePlaces.prefix(10)) { place in
+                        HomePlaceCard(place: place, userLocation: userLocation) {
+                            selectedPlace = place
+                        }
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showingAllFavorites) {
+            AllFavoritesModal(
+                places: favoritePlaces,
+                userLocation: userLocation,
+                onSelect: { place in
+                    selectedPlace = place
+                    showingAllFavorites = false
+                }
+            )
+        }
+    }
+    
+    // MARK: - Places Section (no See All button)
+    private func placesSection(title: String, icon: String, places: [Place]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: icon)
+                    .foregroundColor(.white)
+                Text(title)
+                    .font(.headline)
+                    .foregroundColor(.white)
             }
             
             ScrollView(.horizontal, showsIndicators: false) {
@@ -298,9 +348,150 @@ struct HomeView: View {
                     ForEach(places) { place in
                         HomePlaceCard(place: place, userLocation: userLocation) {
                             selectedPlace = place
-                            showingDetail = true
                         }
                     }
+                }
+            }
+        }
+    }
+    
+    // Skeleton section for loading state
+    private func skeletonSection(title: String, icon: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: icon)
+                    .foregroundColor(.white.opacity(0.5))
+                Text(title)
+                    .font(.headline)
+                    .foregroundColor(.white.opacity(0.5))
+            }
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(0..<3, id: \.self) { _ in
+                        SkeletonCard()
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Skeleton Card
+struct SkeletonCard: View {
+    @State private var isAnimating = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Image placeholder with shimmer
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.gray.opacity(0.3),
+                            Color.gray.opacity(0.5),
+                            Color.gray.opacity(0.3)
+                        ],
+                        startPoint: isAnimating ? .leading : .trailing,
+                        endPoint: isAnimating ? .trailing : .leading
+                    )
+                )
+                .frame(width: 160, height: 100)
+            
+            // Text placeholders
+            VStack(alignment: .leading, spacing: 6) {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.gray.opacity(0.3))
+                    .frame(width: 120, height: 14)
+                
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.gray.opacity(0.2))
+                    .frame(width: 80, height: 10)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+        .frame(width: 160, height: 158)
+        .background(Color(.systemGray6).opacity(0.3))
+        .cornerRadius(16)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
+                isAnimating = true
+            }
+        }
+    }
+}
+
+// MARK: - All Favorites Modal
+struct AllFavoritesModal: View {
+    let places: [Place]
+    let userLocation: CLLocationCoordinate2D?
+    let onSelect: (Place) -> Void
+    @Environment(\.dismiss) var dismiss
+    
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVStack(spacing: 16) {
+                    ForEach(places) { place in
+                        Button {
+                            onSelect(place)
+                        } label: {
+                            HStack(spacing: 12) {
+                                // Thumbnail
+                                if let imageUrl = place.image_cover ?? place.thumbnail_url,
+                                   let url = URL(string: imageUrl) {
+                                    AsyncImage(url: url) { image in
+                                        image.resizable().aspectRatio(contentMode: .fill)
+                                    } placeholder: {
+                                        Color.white.opacity(0.1)
+                                    }
+                                    .frame(width: 60, height: 60)
+                                    .cornerRadius(10)
+                                    .clipped()
+                                } else {
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(Color.white.opacity(0.1))
+                                        .frame(width: 60, height: 60)
+                                        .overlay {
+                                            Image(systemName: "photo")
+                                                .foregroundColor(.white.opacity(0.5))
+                                        }
+                                }
+                                
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(place.displayName)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundColor(.white)
+                                        .lineLimit(1)
+                                    
+                                    if let city = place.city {
+                                        Text(city)
+                                            .font(.caption)
+                                            .foregroundColor(.white.opacity(0.7))
+                                    }
+                                }
+                                
+                                Spacer()
+                                
+                                Image(systemName: "chevron.right")
+                                    .foregroundColor(.white.opacity(0.5))
+                            }
+                            .padding(12)
+                            .background(Color.white.opacity(0.1))
+                            .cornerRadius(12)
+                        }
+                    }
+                }
+                .padding()
+            }
+            .background(Color(hex: "0f0720"))
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .foregroundColor(.white)
                 }
             }
         }
@@ -366,7 +557,7 @@ struct HomePlaceCard: View {
                         if let city = place.city {
                             Text(city)
                                 .font(.caption)
-                                .foregroundColor(.gray)
+                                .foregroundColor(.white.opacity(0.7))
                                 .lineLimit(1)
                         }
                         
@@ -393,7 +584,7 @@ struct HomePlaceCard: View {
             .fill(Color.gray.opacity(0.3))
             .overlay {
                 Image(systemName: "photo")
-                    .foregroundColor(.gray)
+                    .foregroundColor(.white.opacity(0.7))
             }
     }
 }

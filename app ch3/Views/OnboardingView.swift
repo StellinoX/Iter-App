@@ -46,7 +46,7 @@ struct OnboardingView: View {
                     Button("Skip") {
                         completeOnboarding()
                     }
-                    .foregroundColor(.gray)
+                    .foregroundColor(.white.opacity(0.7))
                     .padding()
                 }
                 
@@ -131,7 +131,7 @@ struct OnboardingView: View {
                 
                 Text(page.subtitle)
                     .font(.body)
-                    .foregroundColor(.gray)
+                    .foregroundColor(.white.opacity(0.7))
                     .multilineTextAlignment(.center)
                     .lineLimit(4)
                     .padding(.horizontal, 32)

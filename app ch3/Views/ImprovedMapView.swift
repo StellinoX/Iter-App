@@ -38,28 +38,64 @@ struct ImprovedMapView: View {
                 mapContent
             }
             
-            // Toggle button
+            // Bottom buttons overlay - positioned just above tab bar
             VStack {
                 Spacer()
                 HStack {
                     Spacer()
-                    toggleButton
-                        .padding(.trailing, 16)
-                        .padding(.bottom, 100)
+                    
+                    // List/Map toggle button (centered)
+                    listModalButton
+                    
+                    Spacer()
                 }
+                .overlay(alignment: .trailing) {
+                    // Location button (right aligned, same level)
+                    locationButton
+                        .padding(.trailing, 16)
+                }
+                .padding(.bottom, 16)
             }
         }
     }
     
-    private var toggleButton: some View {
+    // Small rectangle list button
+    private var listModalButton: some View {
         Button(action: {
             withAnimation(.spring(response: 0.3)) {
                 showListView.toggle()
             }
         }) {
-            Image(systemName: showListView ? "map.fill" : "list.bullet")
+            HStack(spacing: 6) {
+                Image(systemName: showListView ? "map.fill" : "list.bullet")
+                    .font(.system(size: 14, weight: .semibold))
+                Text(showListView ? "Map" : "List")
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            .foregroundColor(.black)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Color.appAccent)
+            .cornerRadius(20)
+            .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+        }
+    }
+    
+    // Location button
+    private var locationButton: some View {
+        Button(action: {
+            if let userLocation = locationManager.location {
+                withAnimation(.spring(response: 0.6)) {
+                    cameraPosition = .region(MKCoordinateRegion(
+                        center: userLocation,
+                        span: MKCoordinateSpan(latitudeDelta: 0.5, longitudeDelta: 0.5)
+                    ))
+                }
+            }
+        }) {
+            Image(systemName: "location.fill")
                 .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(.black)
                 .frame(width: 50, height: 50)
                 .background(Color.appAccent)
                 .clipShape(Circle())
@@ -98,7 +134,6 @@ struct ImprovedMapView: View {
                                     .onTapGesture {
                                         withAnimation(.spring(response: 0.3)) {
                                             selectedPlace = place
-                                            showingDetail = true
                                         }
                                     }
                             }
@@ -127,10 +162,9 @@ struct ImprovedMapView: View {
             .mapScope(mapScope)
             .mapControls {
                 MapCompass(scope: mapScope)
-                MapUserLocationButton(scope: mapScope)
             }
             
-            .onMapCameraChange { context in
+            .onMapCameraChange(frequency: .onEnd) { context in
                 currentRegion = context.region
                 
                 // Aggiorna clustering

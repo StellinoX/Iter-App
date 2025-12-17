@@ -12,25 +12,22 @@ struct TripsView: View {
     @State private var selectedTrip: Trip?
     @State private var showingTripDetail = false
     @State private var showingTripPlanner = false
+    @State private var isEditMode = false
+    @State private var selectedForDeletion: Set<UUID> = []
     @Binding var isPresented: Bool
     
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-                // Header
+                // Header with Edit button
                 headerSection
                 
-                // Next trip (if any)
-                if let nextTrip = savedTrips.first {
-                    nextTripCard(nextTrip)
-                }
+                // Plan Your Adventure CTA
+                planAdventureCTA
                 
-                // Create new trip CTA
-                createTripButton
-                
-                // Past trips
-                if savedTrips.count > 1 {
-                    pastTripsSection
+                // All trips (uniform cards)
+                if !savedTrips.isEmpty {
+                    allTripsSection
                 }
                 
                 // Empty state
@@ -42,17 +39,19 @@ struct TripsView: View {
             }
             .padding(.horizontal)
         }
-        .background(Color.appBackground)
+        .background(Color(hex: "0f0720"))
         .onAppear {
             loadSavedTrips()
         }
-        .fullScreenCover(isPresented: $showingTripPlanner) {
+        .fullScreenCover(isPresented: $showingTripPlanner, onDismiss: {
+            loadSavedTrips()
+        }) {
             TripPlannerView(isPresented: $showingTripPlanner)
         }
         .sheet(isPresented: $showingTripDetail) {
             if let trip = selectedTrip {
                 NavigationStack {
-                    TripDetailView(trip: trip, isPresented: $showingTripDetail)
+                    TripDetailView(trip: trip, isPresented: $showingTripDetail, isPlanning: false)
                 }
             }
         }
@@ -61,152 +60,141 @@ struct TripsView: View {
     // MARK: - Subviews
     
     private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Your Trips")
+        HStack {
+            Text("Your Adventures")
                 .font(.title.weight(.bold))
                 .foregroundColor(.white)
             
-            Text("Plan and manage your adventures")
-                .font(.subheadline)
-                .foregroundColor(.gray)
+            Spacer()
+            
+            if !savedTrips.isEmpty {
+                Button {
+                    withAnimation {
+                        if isEditMode && !selectedForDeletion.isEmpty {
+                            deleteSelectedTrips()
+                        }
+                        isEditMode.toggle()
+                        if !isEditMode {
+                            selectedForDeletion.removeAll()
+                        }
+                    }
+                } label: {
+                    Text(isEditMode ? (selectedForDeletion.isEmpty ? "Done" : "Delete") : "Edit")
+                        .foregroundColor(isEditMode && !selectedForDeletion.isEmpty ? .red : .white)
+                }
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 20)
     }
     
-    private func nextTripCard(_ trip: Trip) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header with "Next Trip" badge
-            HStack {
-                Text("🗓️ NEXT TRIP")
-                    .font(.caption.weight(.bold))
-                    .foregroundColor(.appAccent)
-                Spacer()
-                Text(daysUntil(trip.startDate))
-                    .font(.caption)
-                    .foregroundColor(.gray)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            
-            // Trip info
-            VStack(alignment: .leading, spacing: 8) {
-                Text(trip.cityName)
-                    .font(.title2.weight(.bold))
-                    .foregroundColor(.white)
-                
-                HStack(spacing: 16) {
-                    Label(formatDateRange(trip.startDate, trip.endDate), systemImage: "calendar")
-                    Label("\(trip.numberOfDays) days", systemImage: "clock")
-                }
-                .font(.caption)
-                .foregroundColor(.gray)
-                
-                // Activities count
-                let totalActivities = trip.days.reduce(0) { $0 + $1.activities.count }
-                Text("\(totalActivities) places to visit")
-                    .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.8))
-            }
-            .padding(16)
-            
-            // View button
-            Button {
-                selectedTrip = trip
-                showingTripDetail = true
-            } label: {
-                Text("View Itinerary")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(.black)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.appAccent)
-            }
-        }
-        .background(Color(.systemGray6).opacity(0.4))
-        .cornerRadius(20)
-    }
-    
-    private var createTripButton: some View {
+    // Plan Your Adventure CTA with green gradient
+    private var planAdventureCTA: some View {
         Button {
             showingTripPlanner = true
         } label: {
             HStack {
-                Image(systemName: "plus.circle.fill")
-                    .font(.title2)
-                Text("Plan a New Trip")
-                    .font(.headline)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Plan Your Adventure")
+                        .font(.title3.weight(.bold))
+                        .foregroundColor(.white)
+                    
+                    Text("Get AI-powered itineraries")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.8))
+                }
+                
+                Spacer()
+                
+                Image(systemName: "suitcase.fill")
+                    .font(.system(size: 40))
+                    .foregroundColor(.white.opacity(0.5))
             }
-            .foregroundColor(.appAccent)
-            .frame(maxWidth: .infinity)
-            .padding()
-            .background(Color.appAccent.opacity(0.15))
-            .cornerRadius(16)
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(Color.appAccent.opacity(0.3), lineWidth: 1)
+            .padding(20)
+            .background(
+                LinearGradient(
+                    colors: [Color(hex: "9FE000"), Color(hex: "6BBF00")],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
             )
+            .cornerRadius(20)
         }
     }
     
-    private var pastTripsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Past Trips")
-                .font(.headline)
-                .foregroundColor(.white)
-            
-            ForEach(savedTrips.dropFirst()) { trip in
+    // All trips in uniform cards
+    private var allTripsSection: some View {
+        VStack(spacing: 12) {
+            ForEach(savedTrips) { trip in
+                tripCard(trip)
+            }
+        }
+    }
+    
+    // Uniform trip card
+    private func tripCard(_ trip: Trip) -> some View {
+        HStack(spacing: 12) {
+            // Edit mode checkbox
+            if isEditMode {
                 Button {
-                    selectedTrip = trip
-                    showingTripDetail = true
-                } label: {
-                    HStack(spacing: 12) {
-                        // City icon
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color.appAccent.opacity(0.2))
-                                .frame(width: 50, height: 50)
-                            Text("🏙️")
-                                .font(.title2)
-                        }
-                        
-                        // Info
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(trip.cityName)
-                                .font(.subheadline.weight(.medium))
-                                .foregroundColor(.white)
-                            
-                            Text(formatDateRange(trip.startDate, trip.endDate))
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
-                        
-                        Spacer()
-                        
-                        Image(systemName: "chevron.right")
-                            .foregroundColor(.gray)
+                    if selectedForDeletion.contains(trip.id) {
+                        selectedForDeletion.remove(trip.id)
+                    } else {
+                        selectedForDeletion.insert(trip.id)
                     }
-                    .padding(12)
-                    .background(Color(.systemGray6).opacity(0.3))
-                    .cornerRadius(12)
+                } label: {
+                    Image(systemName: selectedForDeletion.contains(trip.id) ? "checkmark.circle.fill" : "circle")
+                        .foregroundColor(selectedForDeletion.contains(trip.id) ? .red : .white.opacity(0.5))
+                        .font(.title2)
                 }
             }
+            
+            // Trip content
+            Button {
+                if !isEditMode {
+                    selectedTrip = trip
+                    showingTripDetail = true
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    // Info
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(trip.cityName)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(.white)
+                        
+                        Text(formatDateRange(trip.startDate, trip.endDate))
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                    
+                    Spacer()
+                    
+                    if !isEditMode {
+                        Image(systemName: "chevron.right")
+                            .foregroundColor(.white.opacity(0.5))
+                    }
+                }
+                .padding(12)
+                .background(Color.white.opacity(0.1))
+                .cornerRadius(12)
+            }
+            .disabled(isEditMode)
         }
     }
     
     private var emptyState: some View {
         VStack(spacing: 16) {
-            Image(systemName: "airplane.departure")
+            Image(systemName: "suitcase")
                 .font(.system(size: 60))
-                .foregroundColor(.gray.opacity(0.5))
+                .foregroundColor(.white.opacity(0.5))
             
-            Text("No trips planned yet")
+            Text("No adventures planned yet")
                 .font(.headline)
                 .foregroundColor(.white)
             
             Text("Start planning your next adventure!")
                 .font(.subheadline)
-                .foregroundColor(.gray)
+                .foregroundColor(.white.opacity(0.7))
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 60)
@@ -215,9 +203,13 @@ struct TripsView: View {
     // MARK: - Helpers
     
     private func loadSavedTrips() {
-        // Load from UserDefaults
-        // For now, use mock data or load from persistence
         savedTrips = UserDefaultsManager.shared.getSavedTrips()
+    }
+    
+    private func deleteSelectedTrips() {
+        savedTrips.removeAll { selectedForDeletion.contains($0.id) }
+        UserDefaultsManager.shared.saveSavedTrips(savedTrips)
+        selectedForDeletion.removeAll()
     }
     
     private func daysUntil(_ date: Date) -> String {
